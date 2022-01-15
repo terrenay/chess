@@ -27,7 +27,7 @@ struct BoardState {
 ///10x12 Array.
 /// board[[2,1]] refers to the a8 square
 pub struct Board {
-    pub board: Array2<i32>, //vielleicht sollte ich einen array von piece enums machen
+    pub board: Array2<Square>,
 }
 
 impl Board {
@@ -37,11 +37,23 @@ impl Board {
 
     ///Only field 1 works at the moment (only position layout, with no further info)
     pub fn from_fen(fen: &str) -> Board {
-        let mut board = Array2::<i32>::zeros((12, 10));
+        let mut board = Array2::<Square>::default((12, 10));
         let mut rank = 8;
         let mut file = 1;
 
         //Field 1
+
+        //Padding around the board
+        for i in 0..12 {
+            for j in 0..10 {
+                if i < 2 || i > 9 {
+                    board[[i, j]] = Square::Padding;
+                } else {
+                    board[[i, 0]] = Square::Padding;
+                    board[[i, 9]] = Square::Padding;
+                }
+            }
+        }
 
         for c in fen.chars() {
             let (y, x) = Board::to_board(rank, file);
@@ -55,18 +67,18 @@ impl Board {
                     file = 1;
                     continue;
                 }
-                'p' => board[[y, x]] = -1,
-                'b' => board[[y, x]] = -2,
-                'n' => board[[y, x]] = -3,
-                'r' => board[[y, x]] = -4,
-                'q' => board[[y, x]] = -5,
-                'k' => board[[y, x]] = -6,
-                'P' => board[[y, x]] = 1,
-                'B' => board[[y, x]] = 2,
-                'N' => board[[y, x]] = 3,
-                'R' => board[[y, x]] = 4,
-                'Q' => board[[y, x]] = 5,
-                'K' => board[[y, x]] = 6,
+                'p' => board[[y, x]] = Square::Full(Piece::pawn(PieceColor::Black)),
+                'b' => board[[y, x]] = Square::Full(Piece::bishop(PieceColor::Black)),
+                'n' => board[[y, x]] = Square::Full(Piece::knight(PieceColor::Black)),
+                'r' => board[[y, x]] = Square::Full(Piece::rook(PieceColor::Black)),
+                'q' => board[[y, x]] = Square::Full(Piece::queen(PieceColor::Black)),
+                'k' => board[[y, x]] = Square::Full(Piece::king(PieceColor::Black)),
+                'P' => board[[y, x]] = Square::Full(Piece::pawn(PieceColor::White)),
+                'B' => board[[y, x]] = Square::Full(Piece::bishop(PieceColor::White)),
+                'N' => board[[y, x]] = Square::Full(Piece::knight(PieceColor::White)),
+                'R' => board[[y, x]] = Square::Full(Piece::rook(PieceColor::White)),
+                'Q' => board[[y, x]] = Square::Full(Piece::queen(PieceColor::White)),
+                'K' => board[[y, x]] = Square::Full(Piece::king(PieceColor::White)),
                 ' ' => break,
                 _ => (),
             }
@@ -85,9 +97,15 @@ impl Board {
     ) {
         let (yf, xf) = Board::to_board(from_rank, from_file);
         let (yt, xt) = Board::to_board(to_rank, to_file);
-        let piece_val = self.board[[yf, xf]];
-        self.board[[yf, xf]] = 0;
-        self.board[[yt, xt]] = piece_val;
+        let square = match self.board[[yf, xf]] {
+            Square::Full(p) => Square::Full(p),
+            _ => panic!(
+                "There is no piece on rank {}, file {}.",
+                from_rank, from_file
+            ),
+        };
+        self.board[[yf, xf]] = Square::Empty;
+        self.board[[yt, xt]] = square;
     }
 
     ///Move piece by string like "e2e4", without checking for legality.
@@ -123,21 +141,14 @@ impl Board {
         (10 - rank, file)
     }
 
-    ///Draw chess board using unicode characters. Colors seem inverted
-    /// on black background
+    ///Draw chess board using unicode characters.
     pub fn draw(&self) {
         for rank in (1..9).rev() {
             for file in 1..9 {
                 let (y, x) = Board::to_board(rank, file);
-                let tile = match self.board[[y, x]].abs() {
-                    0 => " ⠀",
-                    1 => "♟︎ ",
-                    2 => "♝ ",
-                    3 => "♞ ",
-                    4 => "♜ ",
-                    5 => "♛ ",
-                    6 => "♚ ",
-                    _ => panic!(),
+                let tile = match self.board[[y, x]].unicode_str() {
+                    Some(s) => s,
+                    None => continue,
                 };
 
                 let tile = if (rank + file) % 2 == 0 {
@@ -146,10 +157,12 @@ impl Board {
                     tile.on_truecolor(205, 170, 125) //white
                 };
 
-                let tile = if self.board[[y, x]] > 0 {
-                    tile.white()
-                } else {
-                    tile.black()
+                let tile = match self.board[[y, x]].color() {
+                    Some(color) => match color {
+                        PieceColor::Black => tile.black(),
+                        PieceColor::White => tile.white(),
+                    },
+                    None => tile,
                 };
 
                 print!("{}", tile);
@@ -166,30 +179,117 @@ struct Player1 {
 
 struct Player2 {}
 
-enum Piece {
-    Pawn(Pawn),
-    Bishop(Bishop),
-    Knight(Knight),
-    Rook(Rook),
-    Queen(Queen),
-    King(King),
+#[derive(Clone, Copy, Debug)]
+enum PieceKind {
+    Pawn,
+    Bishop,
+    Knight,
+    Rook,
+    Queen,
+    King,
 }
 
-struct Pawn {
-    size: i32,
+#[derive(Clone, Copy, Debug)]
+pub struct Piece {
+    kind: PieceKind,
+    color: PieceColor,
 }
 
-struct Bishop {}
+impl Piece {
+    fn kind(&self) -> PieceKind {
+        self.kind
+    }
 
-struct Knight {}
+    fn color(&self) -> PieceColor {
+        self.color
+    }
 
-struct Rook {}
+    fn pawn(color: PieceColor) -> Self {
+        Self {
+            kind: PieceKind::Pawn,
+            color,
+        }
+    }
 
-struct Queen {}
+    fn bishop(color: PieceColor) -> Self {
+        Self {
+            kind: PieceKind::Bishop,
+            color,
+        }
+    }
 
-struct King {}
+    fn knight(color: PieceColor) -> Self {
+        Self {
+            kind: PieceKind::Knight,
+            color,
+        }
+    }
 
-enum Color {
+    fn rook(color: PieceColor) -> Self {
+        Self {
+            kind: PieceKind::Rook,
+            color,
+        }
+    }
+
+    fn queen(color: PieceColor) -> Self {
+        Self {
+            kind: PieceKind::Queen,
+            color,
+        }
+    }
+
+    fn king(color: PieceColor) -> Self {
+        Self {
+            kind: PieceKind::King,
+            color,
+        }
+    }
+
+    fn unicode_str(&self) -> &str {
+        match self.kind {
+            PieceKind::Pawn => "♟︎ ",
+            PieceKind::Bishop => "♝ ",
+            PieceKind::Knight => "♞ ",
+            PieceKind::Rook => "♜ ",
+            PieceKind::Queen => "♛ ",
+            PieceKind::King => "♚ ",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum Square {
+    Full(Piece),
+    Empty,
+    Padding,
+}
+
+impl Square {
+    fn unicode_str(&self) -> Option<&str> {
+        match self {
+            Self::Full(p) => Some(p.unicode_str()),
+            Self::Empty => Some(" ⠀"),
+            Self::Padding => None,
+        }
+    }
+
+    fn color(&self) -> Option<PieceColor> {
+        match self {
+            Self::Full(p) => Some(p.color),
+            _ => None,
+        }
+    }
+}
+
+impl Default for Square {
+    fn default() -> Self {
+        Self::Empty
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+enum PieceColor {
     Black,
     White,
 }
