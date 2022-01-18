@@ -104,6 +104,11 @@ impl Board {
                 from_rank, from_file
             ),
         };
+        if self.pseudo_legal_moves(yf, xf).unwrap().contains(&(yt, xt)) {
+            println!("allowed");
+        } else {
+            eprintln!("not allowed");
+        }
         self.board[[yf, xf]] = Square::Empty;
         self.board[[yt, xt]] = square;
     }
@@ -117,6 +122,57 @@ impl Board {
         let to_rank = chars.next().unwrap().to_digit(10).unwrap() as usize;
         self.move_piece(from_rank, from_file, to_rank, to_file);
         self.draw();
+    }
+
+    ///This SHOULD EVENTUALLY! check for obstructions. Only depends on the piece kind and
+    /// the current position of the piece. Input: y and x on the array (with padding)
+    pub fn pseudo_legal_moves(&self, y: usize, x: usize) -> Option<Vec<(usize, usize)>> {
+        match self.board[[y, x]] {
+            Square::Full(p) => Some(match p.kind {
+                PieceKind::Pawn => match p.color {
+                    PieceColor::Black => {
+                        if y == 3 {
+                            vec![(y + 1, x), (y + 2, x)]
+                        } else {
+                            vec![(y + 1, x)]
+                        }
+                    }
+                    PieceColor::White => {
+                        if y == 8 {
+                            vec![(y - 1, x), (y - 2, x)]
+                        } else {
+                            vec![(y - 1, x)]
+                        }
+                    }
+                },
+                PieceKind::Knight => vec![
+                    (y - 2, x - 1),
+                    (y - 2, x + 1),
+                    (y - 1, x + 2),
+                    (y + 1, x + 2),
+                    (y + 2, x + 1),
+                    (y + 2, x - 1),
+                    (y + 1, x - 2),
+                    (y - 1, x - 2),
+                ],
+                PieceKind::King => vec![
+                    (y - 1, x - 1),
+                    (y - 1, x),
+                    (y - 1, x + 1),
+                    (y, x + 1),
+                    (y + 1, x + 1),
+                    (y + 1, x),
+                    (y + 1, x - 1),
+                    (y, x - 1),
+                ],
+                PieceKind::Rook => {
+                    //Nach oben
+                    Vec::new()
+                }
+                _ => Vec::new(),
+            }),
+            _ => None,
+        }
     }
 
     ///Example: Converts a to 1.
