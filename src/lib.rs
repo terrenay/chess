@@ -4,14 +4,6 @@ use ndarray::prelude::*;
 
 const STARTING_POSITION: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 
-//todo: square enum einführen. enthält piece oder empty
-//piece enum einführen. Gibt allen Zahlen verständliche Namen und konvertiert sie
-//mit index() oder so zur zahl. board[][] von i32 zu square ändern.
-//anstatt direkt auf die zahl zuzugreifen, muss ich dann halt
-//if let full(piece) = board[[y,x]] {piece.kind.index} benutzen (wenn ich die zahl
-//überhaupt für etwas brauche. Ging ja eigentlich nur darum, wenig speicher zu brauchen
-//und jetzt haben wir einfach ein kleines struct anstatt nur eine zahl).
-
 struct Game {}
 
 impl Game {
@@ -46,7 +38,8 @@ impl Board {
         //Padding around the board
         for i in 0..12 {
             for j in 0..10 {
-                if i < 2 || i > 9 {
+                //better according to clippy
+                if !(2..=9).contains(&i) {
                     board[[i, j]] = Square::Padding;
                 } else {
                     board[[i, 0]] = Square::Padding;
@@ -105,7 +98,7 @@ impl Board {
             ),
         };
         if self.pseudo_legal_moves(yf, xf).unwrap().contains(&(yt, xt)) {
-            println!("allowed");
+            eprintln!("allowed");
         } else {
             eprintln!("not allowed");
         }
@@ -124,26 +117,52 @@ impl Board {
         self.draw();
     }
 
-    ///This SHOULD EVENTUALLY! check for obstructions. Only depends on the piece kind and
+    ///When it's done, this should check for obstructions. Depends on the piece kind and
     /// the current position of the piece. Input: y and x on the array (with padding)
+    /// Supports:
+    /// -Pawn
+    /// -Knight
+    /// -King
+    /// -Rook
+    /// The following pieces already check for obstructions:
+    /// -Pawn
+    /// -Rook
+    ///
+    /// todo: MOVES IN EIGENES STRUCT/FILE TUN
+    /// -attacking move für pawn ist anders als normaler move
+    /// -soll nicht leeren vektor zurückgeben, wenn piece keine moves hat.
+    /// -struktur bei pawns richtig schlecht
+    /// -sliding pieces brauchen viel zu lange für den check
+    /// -sliding pieces müssten eigentlich nur eine richtung berechnen, wenn ich
+    /// den vorgeschlagenen move, der überprüft wird, auch beachten würde
     pub fn pseudo_legal_moves(&self, y: usize, x: usize) -> Option<Vec<(usize, usize)>> {
         match self.board[[y, x]] {
             Square::Full(p) => Some(match p.kind {
                 PieceKind::Pawn => match p.color {
-                    PieceColor::Black => {
-                        if y == 3 {
-                            vec![(y + 1, x), (y + 2, x)]
-                        } else {
-                            vec![(y + 1, x)]
+                    PieceColor::Black => match self.board[[y + 1, x]] {
+                        Square::Empty => {
+                            let mut v = vec![(y + 1, x)];
+                            if y == 3 {
+                                if let Square::Empty = self.board[[y + 2, x]] {
+                                    v.push((y + 2, x));
+                                }
+                            }
+                            v
                         }
-                    }
-                    PieceColor::White => {
-                        if y == 8 {
-                            vec![(y - 1, x), (y - 2, x)]
-                        } else {
-                            vec![(y - 1, x)]
+                        _ => Vec::new(),
+                    },
+                    PieceColor::White => match self.board[[y - 1, x]] {
+                        Square::Empty => {
+                            let mut v = vec![(y - 1, x)];
+                            if y == 8 {
+                                if let Square::Empty = self.board[[y - 2, x]] {
+                                    v.push((y - 2, x));
+                                }
+                            }
+                            v
                         }
-                    }
+                        _ => Vec::new(),
+                    },
                 },
                 PieceKind::Knight => vec![
                     (y - 2, x - 1),
@@ -166,8 +185,43 @@ impl Board {
                     (y, x - 1),
                 ],
                 PieceKind::Rook => {
-                    //Nach oben
-                    Vec::new()
+                    //Upwards
+                    let mut v = Vec::new();
+                    for i in (2..y).rev() {
+                        if let Square::Empty = self.board[[i, x]] {
+                            v.push((i, x));
+                        } else {
+                            break;
+                        }
+                    }
+                    //Downwards
+                    for i in y + 1..10 {
+                        println!("Now in {},{}", i, x);
+                        if let Square::Empty = self.board[[i, x]] {
+                            v.push((i, x));
+                        } else {
+                            break;
+                        }
+                    }
+                    //Right
+                    for j in x + 1..9 {
+                        println!("Now in {},{}", y, j);
+                        if let Square::Empty = self.board[[y, j]] {
+                            v.push((y, j));
+                        } else {
+                            break;
+                        }
+                    }
+                    //Left
+                    for j in (1..x).rev() {
+                        println!("Now in {},{}", y, j);
+                        if let Square::Empty = self.board[[y, j]] {
+                            v.push((y, j));
+                        } else {
+                            break;
+                        }
+                    }
+                    v
                 }
                 _ => Vec::new(),
             }),
@@ -226,6 +280,12 @@ impl Board {
             println!();
         }
         println!();
+    }
+}
+
+impl Default for Board {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
