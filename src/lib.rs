@@ -158,7 +158,7 @@ impl Board {
         match self.board[[y, x]] {
             Square::Full(p) => match p.kind {
                 PieceKind::Pawn => self.pseudo_legal_pawn_moves(p.color, y, x, move_type),
-                PieceKind::Knight => self.pseudo_legal_knight_moves(y, x, move_type),
+                PieceKind::Knight => self.pseudo_legal_knight_moves(p.color, y, x, move_type),
                 PieceKind::King => self.pseudo_legal_king_moves(y, x, move_type),
                 PieceKind::Rook => self.pseudo_legal_rook_moves(y, x, move_type),
                 _ => Vec::new(),
@@ -253,11 +253,12 @@ impl Board {
 
     fn pseudo_legal_knight_moves(
         &self,
+        color: PieceColor,
         y: usize,
         x: usize,
         move_type: MoveType,
     ) -> Vec<(usize, usize)> {
-        vec![
+        let v = vec![
             (y - 2, x - 1),
             (y - 2, x + 1),
             (y - 1, x + 2),
@@ -266,7 +267,28 @@ impl Board {
             (y + 2, x - 1),
             (y + 1, x - 2),
             (y - 1, x - 2),
-        ]
+        ];
+
+        //todo: tests für knight moves mit fressen/ohne!
+        match move_type {
+            MoveType::Default => v
+                .into_iter()
+                .filter(|&(y, x)| matches!(self.board[[y, x]], Square::Empty))
+                .collect(),
+            MoveType::Attack => {
+                let opposite = color.opposite();
+                v.into_iter()
+                    .filter(|&(y, x)| {
+                        matches!(self.board[[y, x]], Square::Empty)
+                            || if let Square::Full(p) = self.board[[y, x]] {
+                                matches!(p.color, opposite)
+                            } else {
+                                false
+                            }
+                    })
+                    .collect()
+            }
+        }
     }
 
     fn pseudo_legal_king_moves(
@@ -304,7 +326,6 @@ impl Board {
         }
         //Downwards
         for i in y + 1..10 {
-            println!("Now in {},{}", i, x);
             if let Square::Empty = self.board[[i, x]] {
                 v.push((i, x));
             } else {
@@ -313,7 +334,6 @@ impl Board {
         }
         //Right
         for j in x + 1..9 {
-            println!("Now in {},{}", y, j);
             if let Square::Empty = self.board[[y, j]] {
                 v.push((y, j));
             } else {
@@ -322,7 +342,6 @@ impl Board {
         }
         //Left
         for j in (1..x).rev() {
-            println!("Now in {},{}", y, j);
             if let Square::Empty = self.board[[y, j]] {
                 v.push((y, j));
             } else {
@@ -522,6 +541,15 @@ impl Default for Square {
 enum PieceColor {
     Black,
     White,
+}
+
+impl PieceColor {
+    fn opposite(&self) -> Self {
+        match *self {
+            Self::Black => Self::White,
+            Self::White => Self::Black,
+        }
+    }
 }
 
 #[cfg(test)]
