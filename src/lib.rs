@@ -108,6 +108,9 @@ impl Board {
         if self
             .pseudo_legal_moves(from_rank, from_file, MoveType::Default)
             .contains(&(yt, xt))
+            || self
+                .pseudo_legal_moves(from_rank, from_file, MoveType::Attack)
+                .contains(&(yt, xt))
         {
             eprintln!("allowed");
         } else {
@@ -269,19 +272,22 @@ impl Board {
             (y - 1, x - 2),
         ];
 
-        //todo: tests für knight moves mit fressen/ohne!
+        //todo: board.set(file,rank,value) anstatt immer zu y und x konvertieren
         match move_type {
             MoveType::Default => v
                 .into_iter()
-                .filter(|&(y, x)| matches!(self.board[[y, x]], Square::Empty))
+                .filter(|&(i, j)| matches!(self.board[[i, j]], Square::Empty))
                 .collect(),
             MoveType::Attack => {
                 let opposite = color.opposite();
                 v.into_iter()
-                    .filter(|&(y, x)| {
-                        matches!(self.board[[y, x]], Square::Empty)
-                            || if let Square::Full(p) = self.board[[y, x]] {
-                                matches!(p.color, opposite)
+                    .filter(|&(i, j)| {
+                        matches!(self.board[[i, j]], Square::Empty)
+                            || if let Square::Full(p) = self.board[[i, j]] {
+                                //matches! war hier falsch. Da drin darf ich nur enum
+                                //variants vergleichen. Hier will ich die Variante einer
+                                //Variable benutzen.
+                                p.color == opposite
                             } else {
                                 false
                             }
@@ -537,7 +543,7 @@ impl Default for Square {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 enum PieceColor {
     Black,
     White,
@@ -621,5 +627,20 @@ mod tests {
     fn black_pawn_double_push_blocked() {
         let b = Board::from_fen("rnbqkbnr/pppppppp/8/P7/8/8/1PPPPPPP/RNBQKBNR w KQkq - 0 1");
         assert_eq!(b.pseudo_legal_moves(7, 1, MoveType::Default), vec![(4, 1)]);
+    }
+
+    #[test]
+    fn white_pawn_not_take_white_pawn() {
+        let b = Board::from_fen("rnbqkbnr/pppppppp/8/8/8/4P3/PPPP1PPP/RNBQKBNR w KQkq - 0 1");
+        assert_eq!(b.pseudo_legal_moves(2, 4, MoveType::Attack), vec![]);
+    }
+
+    #[test]
+    fn white_knight_takes() {
+        let b = Board::from_fen("rnbqkbnr/pp1ppppp/8/8/8/2p5/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+        assert_eq!(
+            b.pseudo_legal_moves(1, 2, MoveType::Attack),
+            vec![(7, 1), (7, 3)]
+        );
     }
 }

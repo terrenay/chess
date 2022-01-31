@@ -22,7 +22,7 @@ fn main() {
     b.move_by_str("g4b4");
     b.move_by_str("a4a5");
     b.move_by_str("a5a6");
-    b.move_by_str("a6a7");
+    b.move_by_str("b8a6");
 
     /*b.move_by_str("e7e5");
     b.move_by_str("g1f3");
