@@ -19,7 +19,7 @@ struct BoardState {
 ///10x12 Array.
 /// board[[2,1]] refers to the a8 square
 pub struct Board {
-    pub board: Array2<Square>,
+    board: Array2<Square>,
 }
 
 impl Board {
@@ -29,8 +29,13 @@ impl Board {
 
     ///Readonly!
     fn at(&self, rank: usize, file: usize) -> Square {
-        let (y, x) = Board::to_board(rank, file);
-        self.board[[y, x]]
+        let (i, j) = Board::to_board(rank, file);
+        self.board[[i, j]]
+    }
+
+    fn set(&mut self, rank: usize, file: usize, val: Square) {
+        let (i, j) = Board::to_board(rank, file);
+        self.board[[i, j]] = val;
     }
 
     ///Only field 1 works at the moment (only position layout, with no further info)
@@ -55,7 +60,7 @@ impl Board {
         }
 
         for c in fen.chars() {
-            let (y, x) = Board::to_board(rank, file);
+            let (i, j) = Board::to_board(rank, file);
             if let Some(num) = c.to_digit(10) {
                 file += num as usize;
                 continue;
@@ -66,18 +71,18 @@ impl Board {
                     file = 1;
                     continue;
                 }
-                'p' => board[[y, x]] = Square::Full(Piece::pawn(PieceColor::Black)),
-                'b' => board[[y, x]] = Square::Full(Piece::bishop(PieceColor::Black)),
-                'n' => board[[y, x]] = Square::Full(Piece::knight(PieceColor::Black)),
-                'r' => board[[y, x]] = Square::Full(Piece::rook(PieceColor::Black)),
-                'q' => board[[y, x]] = Square::Full(Piece::queen(PieceColor::Black)),
-                'k' => board[[y, x]] = Square::Full(Piece::king(PieceColor::Black)),
-                'P' => board[[y, x]] = Square::Full(Piece::pawn(PieceColor::White)),
-                'B' => board[[y, x]] = Square::Full(Piece::bishop(PieceColor::White)),
-                'N' => board[[y, x]] = Square::Full(Piece::knight(PieceColor::White)),
-                'R' => board[[y, x]] = Square::Full(Piece::rook(PieceColor::White)),
-                'Q' => board[[y, x]] = Square::Full(Piece::queen(PieceColor::White)),
-                'K' => board[[y, x]] = Square::Full(Piece::king(PieceColor::White)),
+                'p' => board[[i, j]] = Square::Full(Piece::pawn(PieceColor::Black)),
+                'b' => board[[i, j]] = Square::Full(Piece::bishop(PieceColor::Black)),
+                'n' => board[[i, j]] = Square::Full(Piece::knight(PieceColor::Black)),
+                'r' => board[[i, j]] = Square::Full(Piece::rook(PieceColor::Black)),
+                'q' => board[[i, j]] = Square::Full(Piece::queen(PieceColor::Black)),
+                'k' => board[[i, j]] = Square::Full(Piece::king(PieceColor::Black)),
+                'P' => board[[i, j]] = Square::Full(Piece::pawn(PieceColor::White)),
+                'B' => board[[i, j]] = Square::Full(Piece::bishop(PieceColor::White)),
+                'N' => board[[i, j]] = Square::Full(Piece::knight(PieceColor::White)),
+                'R' => board[[i, j]] = Square::Full(Piece::rook(PieceColor::White)),
+                'Q' => board[[i, j]] = Square::Full(Piece::queen(PieceColor::White)),
+                'K' => board[[i, j]] = Square::Full(Piece::king(PieceColor::White)),
                 ' ' => break,
                 _ => (),
             }
@@ -94,17 +99,16 @@ impl Board {
         to_rank: usize,
         to_file: usize,
     ) {
-        let (yf, xf) = Board::to_board(from_rank, from_file);
-        let (yt, xt) = Board::to_board(to_rank, to_file);
-
         //This check is redundant:
-        let square = match self.board[[yf, xf]] {
+        let square = match self.at(from_rank, from_file) {
             Square::Full(p) => Square::Full(p),
             _ => panic!(
                 "There is no piece on rank {}, file {}.",
                 from_rank, from_file
             ),
         };
+        let (yt, xt) = Board::to_board(to_rank, to_file);
+        //todo: sollen (rank,file) tupel ausgeben und nicht mehr (i,j) tupel
         if self
             .pseudo_legal_moves(from_rank, from_file, MoveType::Default)
             .contains(&(yt, xt))
@@ -116,8 +120,8 @@ impl Board {
         } else {
             eprintln!("not allowed");
         }
-        self.board[[yf, xf]] = Square::Empty;
-        self.board[[yt, xt]] = square;
+        self.set(from_rank, from_file, Square::Empty);
+        self.set(to_rank, to_file, square);
     }
 
     ///Move piece by string like "e2e4", without checking for legality.
@@ -591,6 +595,7 @@ mod tests {
     #[test]
     fn black_pawn_not_take_center() {
         let b = Board::from_fen("rnbqkbnr/ppp1pppp/8/3p4/3P4/8/PPP1PPPP/RNBQKBNR w KQkq - 0 1");
+        assert_eq!(b.pseudo_legal_moves(5, 4, MoveType::Attack), vec![]);
     }
 
     #[test]
