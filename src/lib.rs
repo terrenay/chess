@@ -28,12 +28,14 @@ impl Board {
     }
 
     ///Readonly!
-    fn at(&self, rank: usize, file: usize) -> Square {
+    /// Out-of-bounds are supported as far as padding goes. That is, rank 0 and rank -1
+    /// would be padding rows, but rank -2 would panic.
+    fn at(&self, rank: i8, file: i8) -> Square {
         let (i, j) = Board::to_board(rank, file);
         self.board[[i, j]]
     }
 
-    fn set(&mut self, rank: usize, file: usize, val: Square) {
+    fn set(&mut self, rank: i8, file: i8, val: Square) {
         let (i, j) = Board::to_board(rank, file);
         self.board[[i, j]] = val;
     }
@@ -62,7 +64,7 @@ impl Board {
         for c in fen.chars() {
             let (i, j) = Board::to_board(rank, file);
             if let Some(num) = c.to_digit(10) {
-                file += num as usize;
+                file += num as i8;
                 continue;
             }
             match c {
@@ -91,15 +93,10 @@ impl Board {
         Board { board }
     }
 
-    ///Move piece in array without checking for legality.
-    pub fn move_piece(
-        &mut self,
-        from_rank: usize,
-        from_file: usize,
-        to_rank: usize,
-        to_file: usize,
-    ) {
-        //This check is redundant:
+    ///Check for piece move legality (attack or default) & obstruction.
+    /// Does not yet check for checks or pins.
+    pub fn move_piece(&mut self, from_rank: i8, from_file: i8, to_rank: i8, to_file: i8) {
+        //This check is basically redundant:
         let square = match self.at(from_rank, from_file) {
             Square::Full(p) => Square::Full(p),
             _ => panic!(
@@ -107,14 +104,13 @@ impl Board {
                 from_rank, from_file
             ),
         };
-        let (yt, xt) = Board::to_board(to_rank, to_file);
-        //todo: sollen (rank,file) tupel ausgeben und nicht mehr (i,j) tupel
+
         if self
             .pseudo_legal_moves(from_rank, from_file, MoveType::Default)
-            .contains(&(yt, xt))
+            .contains(&Field::new(to_rank, to_file))
             || self
                 .pseudo_legal_moves(from_rank, from_file, MoveType::Attack)
-                .contains(&(yt, xt))
+                .contains(&Field::new(to_rank, to_file))
         {
             eprintln!("allowed");
         } else {
@@ -128,10 +124,15 @@ impl Board {
     pub fn move_by_str(&mut self, arg: &str) {
         let mut chars = arg.chars();
         let from_file = Board::file_letter_to_number(chars.next().unwrap());
-        let from_rank = chars.next().unwrap().to_digit(10).unwrap() as usize;
+        let from_rank = chars.next().unwrap().to_digit(10).unwrap();
         let to_file = Board::file_letter_to_number(chars.next().unwrap());
-        let to_rank = chars.next().unwrap().to_digit(10).unwrap() as usize;
-        self.move_piece(from_rank, from_file, to_rank, to_file);
+        let to_rank = chars.next().unwrap().to_digit(10).unwrap();
+        self.move_piece(
+            from_rank as i8,
+            from_file as i8,
+            to_rank as i8,
+            to_file as i8,
+        );
         self.draw();
     }
 
@@ -155,19 +156,13 @@ impl Board {
     ///
     /// -bei attack squares für pawn ganz anders, für alle pieces darf der erste, wo ein
     /// GEGENER draufsteht, auch angegriffen werden.
-    pub fn pseudo_legal_moves(
-        &self,
-        rank: usize,
-        file: usize,
-        move_type: MoveType,
-    ) -> Vec<(usize, usize)> {
-        let (y, x) = Board::to_board(rank, file);
-        match self.board[[y, x]] {
+    pub fn pseudo_legal_moves(&self, rank: i8, file: i8, move_type: MoveType) -> Vec<Field> {
+        match self.at(rank, file) {
             Square::Full(p) => match p.kind {
-                PieceKind::Pawn => self.pseudo_legal_pawn_moves(p.color, y, x, move_type),
-                PieceKind::Knight => self.pseudo_legal_knight_moves(p.color, y, x, move_type),
-                PieceKind::King => self.pseudo_legal_king_moves(y, x, move_type),
-                PieceKind::Rook => self.pseudo_legal_rook_moves(y, x, move_type),
+                PieceKind::Pawn => self.pseudo_legal_pawn_moves(p.color, rank, file, move_type),
+                PieceKind::Knight => self.pseudo_legal_knight_moves(p.color, rank, file, move_type),
+                PieceKind::King => self.pseudo_legal_king_moves(rank, file, move_type),
+                PieceKind::Rook => self.pseudo_legal_rook_moves(rank, file, move_type),
                 _ => Vec::new(),
             },
             Square::Empty => {
@@ -186,37 +181,42 @@ impl Board {
     fn pseudo_legal_pawn_moves(
         &self,
         color: PieceColor,
-        y: usize,
-        x: usize,
+        rank: i8,
+        file: i8,
         move_type: MoveType,
-    ) -> Vec<(usize, usize)> {
+    ) -> Vec<Field> {
         match color {
             PieceColor::Black => match move_type {
-                MoveType::Default => match self.board[[y + 1, x]] {
+                MoveType::Default => match self.at(rank - 1, file) {
                     Square::Empty => {
-                        let mut v = vec![(y + 1, x)];
-                        if y == 3 {
-                            if let Square::Empty = self.board[[y + 2, x]] {
-                                v.push((y + 2, x));
+                        let mut v = vec![Field::new(rank - 1, file)];
+
+                        if rank == 7 {
+                            //Double push
+                            if let Square::Empty = self.at(rank - 2, file) {
+                                v.push(Field::new(rank - 2, file));
                             }
                         }
                         v
                     }
-                    _ => Vec::new(),
+                    _ => vec![],
                 },
                 MoveType::Attack => {
-                    let mut v = Vec::new();
-                    match self.board[[y + 1, x - 1]] {
-                        //Left attack
+                    let mut v = vec![];
+
+                    //Black pawn attacks down to the left
+                    match self.at(rank - 1, file - 1) {
                         Square::Full(p) if matches!(p.color, PieceColor::White) => {
-                            v.push((y + 1, x - 1));
+                            v.push(Field::new(rank - 1, file - 1));
                         }
                         _ => (),
                     }
-                    match self.board[[y + 1, x + 1]] {
+
+                    //Black pawn attacks down to the right
+                    match self.at(rank - 1, file + 1) {
                         //Right attack
                         Square::Full(p) if matches!(p.color, PieceColor::White) => {
-                            v.push((y + 1, x + 1));
+                            v.push(Field::new(rank - 1, file + 1));
                         }
                         _ => (),
                     }
@@ -224,31 +224,35 @@ impl Board {
                 }
             },
             PieceColor::White => match move_type {
-                MoveType::Default => match self.board[[y - 1, x]] {
+                MoveType::Default => match self.at(rank + 1, file) {
                     Square::Empty => {
-                        let mut v = vec![(y - 1, x)];
-                        if y == 8 {
-                            if let Square::Empty = self.board[[y - 2, x]] {
-                                v.push((y - 2, x));
+                        let mut v = vec![Field::new(rank + 1, file)];
+
+                        if rank == 2 {
+                            //Double push
+                            if let Square::Empty = self.at(rank + 2, file) {
+                                v.push(Field::new(rank + 2, file));
                             }
                         }
                         v
                     }
-                    _ => Vec::new(),
+                    _ => vec![],
                 },
                 MoveType::Attack => {
                     let mut v = Vec::new();
-                    match self.board[[y - 1, x - 1]] {
-                        //Left attack
+
+                    //White pawn attacks up to the left
+                    match self.at(rank + 1, file - 1) {
                         Square::Full(p) if matches!(p.color, PieceColor::Black) => {
-                            v.push((y - 1, x - 1));
+                            v.push(Field::new(rank + 1, file - 1));
                         }
                         _ => (),
                     }
-                    match self.board[[y - 1, x + 1]] {
-                        //Right attack
+
+                    //White pawn attacks up to the right
+                    match self.at(rank + 1, file + 1) {
                         Square::Full(p) if matches!(p.color, PieceColor::Black) => {
-                            v.push((y - 1, x + 1));
+                            v.push(Field::new(rank + 1, file + 1));
                         }
                         _ => (),
                     }
@@ -261,33 +265,32 @@ impl Board {
     fn pseudo_legal_knight_moves(
         &self,
         color: PieceColor,
-        y: usize,
-        x: usize,
+        rank: i8,
+        file: i8,
         move_type: MoveType,
-    ) -> Vec<(usize, usize)> {
+    ) -> Vec<Field> {
         let v = vec![
-            (y - 2, x - 1),
-            (y - 2, x + 1),
-            (y - 1, x + 2),
-            (y + 1, x + 2),
-            (y + 2, x + 1),
-            (y + 2, x - 1),
-            (y + 1, x - 2),
-            (y - 1, x - 2),
+            Field::new(rank + 2, file - 1),
+            Field::new(rank + 2, file + 1),
+            Field::new(rank + 1, file + 2),
+            Field::new(rank - 1, file + 2),
+            Field::new(rank - 2, file + 1),
+            Field::new(rank - 2, file - 1),
+            Field::new(rank - 1, file - 2),
+            Field::new(rank + 1, file - 2),
         ];
 
-        //todo: board.set(file,rank,value) anstatt immer zu y und x konvertieren
         match move_type {
             MoveType::Default => v
                 .into_iter()
-                .filter(|&(i, j)| matches!(self.board[[i, j]], Square::Empty))
+                .filter(|field| matches!(self.at(field.rank, field.file), Square::Empty))
                 .collect(),
             MoveType::Attack => {
                 let opposite = color.opposite();
                 v.into_iter()
-                    .filter(|&(i, j)| {
-                        matches!(self.board[[i, j]], Square::Empty)
-                            || if let Square::Full(p) = self.board[[i, j]] {
+                    .filter(|field| {
+                        matches!(self.at(field.rank, field.file), Square::Empty)
+                            || if let Square::Full(p) = self.at(field.rank, field.file) {
                                 //matches! war hier falsch. Da drin darf ich nur enum
                                 //variants vergleichen. Hier will ich die Variante einer
                                 //Variable benutzen.
@@ -301,59 +304,49 @@ impl Board {
         }
     }
 
-    fn pseudo_legal_king_moves(
-        &self,
-        y: usize,
-        x: usize,
-        move_type: MoveType,
-    ) -> Vec<(usize, usize)> {
+    fn pseudo_legal_king_moves(&self, rank: i8, file: i8, move_type: MoveType) -> Vec<Field> {
         vec![
-            (y - 1, x - 1),
-            (y - 1, x),
-            (y - 1, x + 1),
-            (y, x + 1),
-            (y + 1, x + 1),
-            (y + 1, x),
-            (y + 1, x - 1),
-            (y, x - 1),
+            Field::new(rank + 1, file - 1),
+            Field::new(rank + 1, file),
+            Field::new(rank + 1, file + 2),
+            Field::new(rank, file + 1),
+            Field::new(rank - 1, file + 1),
+            Field::new(rank - 1, file),
+            Field::new(rank - 1, file - 1),
+            Field::new(rank, file - 1),
         ]
     }
 
-    fn pseudo_legal_rook_moves(
-        &self,
-        y: usize,
-        x: usize,
-        move_type: MoveType,
-    ) -> Vec<(usize, usize)> {
+    fn pseudo_legal_rook_moves(&self, rank: i8, file: i8, move_type: MoveType) -> Vec<Field> {
         //Upwards
         let mut v = Vec::new();
-        for i in (2..y).rev() {
-            if let Square::Empty = self.board[[i, x]] {
-                v.push((i, x));
+        for i in rank + 1..=8 {
+            if let Square::Empty = self.at(i, file) {
+                v.push(Field::new(i, file));
             } else {
                 break;
             }
         }
         //Downwards
-        for i in y + 1..10 {
-            if let Square::Empty = self.board[[i, x]] {
-                v.push((i, x));
+        for i in (1..=rank - 1).rev() {
+            if let Square::Empty = self.at(i, file) {
+                v.push(Field::new(i, file));
             } else {
                 break;
             }
         }
         //Right
-        for j in x + 1..9 {
-            if let Square::Empty = self.board[[y, j]] {
-                v.push((y, j));
+        for j in file + 1..=8 {
+            if let Square::Empty = self.at(rank, j) {
+                v.push(Field::new(rank, j));
             } else {
                 break;
             }
         }
         //Left
-        for j in (1..x).rev() {
-            if let Square::Empty = self.board[[y, j]] {
-                v.push((y, j));
+        for j in (1..=file - 1).rev() {
+            if let Square::Empty = self.at(rank, j) {
+                v.push(Field::new(rank, j));
             } else {
                 break;
             }
@@ -379,8 +372,13 @@ impl Board {
     /// Input are coordinates on the actual chess board.
     /// Output are coordinates on the 2d array with padding included.
     /// Output coordinate has y coordinate first (like ndarray)
-    pub fn to_board(rank: usize, file: usize) -> (usize, usize) {
-        (10 - rank, file)
+    pub fn to_board(rank: i8, file: i8) -> (usize, usize) {
+        //Rank is never bigger than 10, so 10-rank is guaranteed to be >= 0.
+        //Rank 10 is needed in the knight's move generation if the knight is on
+        //rank 8. Analogously, rank -1 is needed if it is on rank 1.
+        //Thus we accept unsigned ints.
+        debug_assert!(rank >= -1 && rank <= 10 && file >= 0 && file <= 9);
+        ((10 - rank) as usize, file as usize)
     }
 
     ///Draw chess board using unicode characters.
@@ -389,8 +387,8 @@ impl Board {
     pub fn draw(&self) {
         for rank in (1..9).rev() {
             for file in 1..9 {
-                let (y, x) = Board::to_board(rank, file);
-                let tile = match self.board[[y, x]].unicode_str() {
+                let square = self.at(rank, file);
+                let tile = match square.unicode_str() {
                     Some(s) => s,
                     None => continue,
                 };
@@ -401,7 +399,7 @@ impl Board {
                     tile.on_truecolor(205, 170, 125) //white
                 };
 
-                let tile = match self.board[[y, x]].color() {
+                let tile = match square.color() {
                     Some(color) => match color {
                         PieceColor::Black => tile.black(),
                         PieceColor::White => tile.white(),
@@ -547,6 +545,18 @@ impl Default for Square {
     }
 }
 
+#[derive(PartialEq, Debug)]
+pub struct Field {
+    rank: i8,
+    file: i8,
+}
+
+impl Field {
+    fn new(rank: i8, file: i8) -> Self {
+        Self { rank, file }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum PieceColor {
     Black,
@@ -561,7 +571,7 @@ impl PieceColor {
         }
     }
 }
-
+/*
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -649,3 +659,4 @@ mod tests {
         );
     }
 }
+*/

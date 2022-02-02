@@ -24,6 +24,14 @@ fn main() {
     b.move_by_str("a5a6");
     b.move_by_str("b8a6");
 
+    //TODO: Gibt Fehler, wenn knight ganz links am Rand steht, weil padding dort nur eins
+    //breit ist. Sollte ich auch auf 2 erhöhen (wie nach oben). Muss nur array size
+    //anpassen und die toBoard funktion :) Gott sei dank hab ich ja jetzt alles
+    //abhängig von rank und file gemacht haha
+    //TODO: farbe von weissen feldern bisschen dunkler machen
+
+    //b.move_by_str("a6c7");
+
     /*b.move_by_str("e7e5");
     b.move_by_str("g1f3");
     b.move_by_str("b8b6");*/
