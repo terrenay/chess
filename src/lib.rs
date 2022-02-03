@@ -42,7 +42,7 @@ impl Board {
 
     ///Only field 1 works at the moment (only position layout, with no further info)
     pub fn from_fen(fen: &str) -> Board {
-        let mut board = Array2::<Square>::default((12, 10));
+        let mut board = Array2::<Square>::default((12, 12));
         let mut rank = 8;
         let mut file = 1;
 
@@ -50,13 +50,15 @@ impl Board {
 
         //Padding around the board
         for i in 0..12 {
-            for j in 0..10 {
+            for j in 0..12 {
                 //better according to clippy
                 if !(2..=9).contains(&i) {
                     board[[i, j]] = Square::Padding;
                 } else {
                     board[[i, 0]] = Square::Padding;
-                    board[[i, 9]] = Square::Padding;
+                    board[[i, 1]] = Square::Padding;
+                    board[[i, 10]] = Square::Padding;
+                    board[[i, 11]] = Square::Padding;
                 }
             }
         }
@@ -300,6 +302,7 @@ impl Board {
                             }
                     })
                     .collect()
+                //todo: das filtern nach piece oder empty in separate funktion
             }
         }
     }
@@ -355,8 +358,8 @@ impl Board {
     }
 
     ///Example: Converts a to 1.
-    fn file_letter_to_number(rank: char) -> usize {
-        match rank {
+    fn file_letter_to_number(file: char) -> usize {
+        match file {
             'a' => 1,
             'b' => 2,
             'c' => 3,
@@ -369,6 +372,20 @@ impl Board {
         }
     }
 
+    fn number_to_file_letter(file: usize) -> char {
+        match file {
+            1 => 'a',
+            2 => 'b',
+            3 => 'c',
+            4 => 'd',
+            5 => 'e',
+            6 => 'f',
+            7 => 'g',
+            8 => 'h',
+            _ => panic!(),
+        }
+    }
+
     /// Input are coordinates on the actual chess board.
     /// Output are coordinates on the 2d array with padding included.
     /// Output coordinate has y coordinate first (like ndarray)
@@ -377,8 +394,8 @@ impl Board {
         //Rank 10 is needed in the knight's move generation if the knight is on
         //rank 8. Analogously, rank -1 is needed if it is on rank 1.
         //Thus we accept unsigned ints.
-        debug_assert!(rank >= -1 && rank <= 10 && file >= 0 && file <= 9);
-        ((10 - rank) as usize, file as usize)
+        debug_assert!(rank >= -1 && rank <= 10 && file >= -1 && file <= 10);
+        ((10 - rank) as usize, (file + 1) as usize)
     }
 
     ///Draw chess board using unicode characters.
@@ -533,10 +550,6 @@ impl Square {
             _ => None,
         }
     }
-
-    fn is_full(&self) -> bool {
-        matches!(*self, Self::Full(p))
-    }
 }
 
 impl Default for Square {
@@ -571,7 +584,7 @@ impl PieceColor {
         }
     }
 }
-/*
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -581,7 +594,10 @@ mod tests {
     #[test]
     fn white_pawn_take_left() {
         let b = Board::from_fen("rnbqkbnr/pppp1ppp/8/3p4/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 1");
-        assert_eq!(b.pseudo_legal_moves(4, 5, MoveType::Attack), vec![(5, 4)]);
+        assert_eq!(
+            b.pseudo_legal_moves(4, 5, MoveType::Attack),
+            vec![Field::new(5, 4)]
+        );
     }
 
     #[test]
@@ -593,13 +609,19 @@ mod tests {
     #[test]
     fn white_pawn_take_right() {
         let b = Board::from_fen("rnbqkbnr/pppp1ppp/8/5p2/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 1");
-        assert_eq!(b.pseudo_legal_moves(4, 5, MoveType::Attack), vec![(5, 6)]);
+        assert_eq!(
+            b.pseudo_legal_moves(4, 5, MoveType::Attack),
+            vec![Field::new(5, 6)]
+        );
     }
 
     #[test]
     fn black_pawn_take_left() {
         let b = Board::from_fen("rnbqkbnr/pppp1ppp/8/4p3/3P4/8/PPP1PPPP/RNBQKBNR w KQkq - 0 1");
-        assert_eq!(b.pseudo_legal_moves(5, 5, MoveType::Attack), vec![(6, 4)]);
+        assert_eq!(
+            b.pseudo_legal_moves(5, 5, MoveType::Attack),
+            vec![Field::new(4, 4)]
+        );
     }
 
     #[test]
@@ -611,7 +633,10 @@ mod tests {
     #[test]
     fn black_pawn_take_right() {
         let b = Board::from_fen("rnbqkbnr/ppp1pppp/8/3p4/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 1");
-        assert_eq!(b.pseudo_legal_moves(5, 4, MoveType::Attack), vec![(6, 5)]);
+        assert_eq!(
+            b.pseudo_legal_moves(5, 4, MoveType::Attack),
+            vec![Field::new(4, 5)]
+        );
     }
 
     #[test]
@@ -619,7 +644,7 @@ mod tests {
         let b = Board::new();
         assert_eq!(
             b.pseudo_legal_moves(2, 1, MoveType::Default),
-            vec![(7, 1), (6, 1)]
+            vec![Field::new(3, 1), Field::new(4, 1)]
         );
     }
 
@@ -628,20 +653,26 @@ mod tests {
         let b = Board::new();
         assert_eq!(
             b.pseudo_legal_moves(7, 1, MoveType::Default),
-            vec![(4, 1), (5, 1)]
+            vec![Field::new(6, 1), Field::new(5, 1)]
         );
     }
 
     #[test]
     fn white_pawn_double_push_blocked() {
         let b = Board::from_fen("rnbqkbnr/1ppppppp/8/8/p7/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
-        assert_eq!(b.pseudo_legal_moves(2, 1, MoveType::Default), vec![(7, 1)]);
+        assert_eq!(
+            b.pseudo_legal_moves(2, 1, MoveType::Default),
+            vec![Field::new(3, 1)]
+        );
     }
 
     #[test]
     fn black_pawn_double_push_blocked() {
         let b = Board::from_fen("rnbqkbnr/pppppppp/8/P7/8/8/1PPPPPPP/RNBQKBNR w KQkq - 0 1");
-        assert_eq!(b.pseudo_legal_moves(7, 1, MoveType::Default), vec![(4, 1)]);
+        assert_eq!(
+            b.pseudo_legal_moves(7, 1, MoveType::Default),
+            vec![Field::new(6, 1)]
+        );
     }
 
     #[test]
@@ -655,8 +686,7 @@ mod tests {
         let b = Board::from_fen("rnbqkbnr/pp1ppppp/8/8/8/2p5/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
         assert_eq!(
             b.pseudo_legal_moves(1, 2, MoveType::Attack),
-            vec![(7, 1), (7, 3)]
+            vec![Field::new(3, 1), Field::new(3, 3)]
         );
     }
 }
-*/

@@ -10,7 +10,7 @@ fn main() {
                 "{}, {}: {:?}",
                 rank,
                 file,
-                b.pseudo_legal_moves(rank, file, MoveType::Attack)
+                b.pseudo_legal_moves(rank, file, MoveType::Default)
             );
         }
     }
@@ -23,6 +23,7 @@ fn main() {
     b.move_by_str("a4a5");
     b.move_by_str("a5a6");
     b.move_by_str("b8a6");
+    println!("{:?}", b.pseudo_legal_moves(6, 1, MoveType::Attack));
 
     //TODO: Gibt Fehler, wenn knight ganz links am Rand steht, weil padding dort nur eins
     //breit ist. Sollte ich auch auf 2 erhöhen (wie nach oben). Muss nur array size
