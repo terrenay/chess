@@ -145,26 +145,19 @@ impl Board {
     /// -Knight
     /// -King
     /// -Rook
-    /// The following pieces already check for obstructions:
-    /// -Pawn
-    /// -Rook
     ///
     /// todo: MOVES IN EIGENES STRUCT/FILE TUN
-    /// -attacking move für pawn ist anders als normaler move
-    /// -struktur bei pawns richtig schlecht
     /// -sliding pieces brauchen viel zu lange für den check
     /// -sliding pieces müssten eigentlich nur eine richtung berechnen, wenn ich
     /// den vorgeschlagenen move, der überprüft wird, auch beachten würde
-    ///
-    /// -bei attack squares für pawn ganz anders, für alle pieces darf der erste, wo ein
-    /// GEGENER draufsteht, auch angegriffen werden.
     pub fn pseudo_legal_moves(&self, rank: i8, file: i8, move_type: MoveType) -> Vec<Field> {
         match self.at(rank, file) {
             Square::Full(p) => match p.kind {
                 PieceKind::Pawn => self.pseudo_legal_pawn_moves(p.color, rank, file, move_type),
                 PieceKind::Knight => self.pseudo_legal_knight_moves(p.color, rank, file, move_type),
-                PieceKind::King => self.pseudo_legal_king_moves(rank, file, move_type),
-                PieceKind::Rook => self.pseudo_legal_rook_moves(rank, file, move_type),
+                PieceKind::King => self.pseudo_legal_king_moves(p.color, rank, file, move_type),
+                PieceKind::Rook => self.pseudo_legal_rook_moves(p.color, rank, file, move_type),
+                PieceKind::Bishop => self.pseudo_legal_bishop_moves(p.color, rank, file, move_type),
                 _ => Vec::new(),
             },
             Square::Empty => {
@@ -283,32 +276,25 @@ impl Board {
         ];
 
         match move_type {
-            MoveType::Default => v
-                .into_iter()
-                .filter(|field| matches!(self.at(field.rank, field.file), Square::Empty))
-                .collect(),
+            MoveType::Default => self.filter_free(v),
             MoveType::Attack => {
                 let opposite = color.opposite();
-                v.into_iter()
-                    .filter(|field| {
-                        matches!(self.at(field.rank, field.file), Square::Empty)
-                            || if let Square::Full(p) = self.at(field.rank, field.file) {
-                                //matches! war hier falsch. Da drin darf ich nur enum
-                                //variants vergleichen. Hier will ich die Variante einer
-                                //Variable benutzen.
-                                p.color == opposite
-                            } else {
-                                false
-                            }
-                    })
-                    .collect()
-                //todo: das filtern nach piece oder empty in separate funktion
+                self.filter_free_or_opponent(v, opposite)
             }
         }
     }
 
-    fn pseudo_legal_king_moves(&self, rank: i8, file: i8, move_type: MoveType) -> Vec<Field> {
-        vec![
+    ///This is quite scuffed at the moment since king moves are quite useless
+    /// without checking for checks...
+    /// todo: enemy checks
+    fn pseudo_legal_king_moves(
+        &self,
+        color: PieceColor,
+        rank: i8,
+        file: i8,
+        move_type: MoveType,
+    ) -> Vec<Field> {
+        let v = vec![
             Field::new(rank + 1, file - 1),
             Field::new(rank + 1, file),
             Field::new(rank + 1, file + 2),
@@ -317,44 +303,129 @@ impl Board {
             Field::new(rank - 1, file),
             Field::new(rank - 1, file - 1),
             Field::new(rank, file - 1),
-        ]
+        ];
+        match move_type {
+            MoveType::Default => self.filter_free(v),
+            MoveType::Attack => {
+                let opposite = color.opposite();
+                self.filter_free_or_opponent(v, opposite)
+            }
+        }
     }
 
-    fn pseudo_legal_rook_moves(&self, rank: i8, file: i8, move_type: MoveType) -> Vec<Field> {
+    ///todo: movetype attack wird noch ignoriert
+    fn pseudo_legal_rook_moves(
+        &self,
+        color: PieceColor,
+        rank: i8,
+        file: i8,
+        move_type: MoveType,
+    ) -> Vec<Field> {
         //Upwards
-        let mut v = Vec::new();
+        let mut v = vec![];
         for i in rank + 1..=8 {
-            if let Square::Empty = self.at(i, file) {
-                v.push(Field::new(i, file));
-            } else {
+            if self.insert_or_break_loop(color, i, file, move_type, &mut v) == BreakLoop::True {
                 break;
             }
         }
         //Downwards
         for i in (1..=rank - 1).rev() {
-            if let Square::Empty = self.at(i, file) {
-                v.push(Field::new(i, file));
-            } else {
+            if self.insert_or_break_loop(color, i, file, move_type, &mut v) == BreakLoop::True {
                 break;
             }
         }
         //Right
         for j in file + 1..=8 {
-            if let Square::Empty = self.at(rank, j) {
-                v.push(Field::new(rank, j));
-            } else {
+            if self.insert_or_break_loop(color, rank, j, move_type, &mut v) == BreakLoop::True {
                 break;
             }
         }
         //Left
         for j in (1..=file - 1).rev() {
-            if let Square::Empty = self.at(rank, j) {
-                v.push(Field::new(rank, j));
-            } else {
+            if self.insert_or_break_loop(color, rank, j, move_type, &mut v) == BreakLoop::True {
                 break;
             }
         }
         v
+    }
+
+    fn pseudo_legal_bishop_moves(
+        &self,
+        color: PieceColor,
+        rank: i8,
+        file: i8,
+        move_type: MoveType,
+    ) -> Vec<Field> {
+        let mut v = vec![];
+        let mut diff = 1;
+
+        //Todo: bekommt hier irgendwie eine alte version
+        //des boards. Vielleicht muss ich das mehr mit
+        //Referenzen rumpassen?
+
+        //Up right
+        while rank + diff <= 8 && file + diff <= 8 {
+            if self.insert_or_break_loop(color, rank, file, move_type, &mut v) == BreakLoop::True {
+                break;
+            }
+            diff += 1;
+        }
+        diff = 0;
+        v
+    }
+
+    ///This function is intended to be used in a loop for a sliding piece which follows that
+    /// piece's move direction and checks each square for obstruction by an opponent or own piece.
+    /// This function returns BreakLoop::True if the current square is full or padding.
+    /// It returns BreakLoop::False if the square is empty.
+    /// It pushes coordinates into vector v if the color is the opponent's color or if it's empty.
+    fn insert_or_break_loop(
+        &self,
+        color: PieceColor,
+        rank: i8,
+        file: i8,
+        move_type: MoveType,
+        v: &mut Vec<Field>,
+    ) -> BreakLoop {
+        match self.at(rank, file) {
+            Square::Empty => {
+                v.push(Field::new(rank, file));
+            }
+            Square::Full(p) => {
+                if matches!(move_type, MoveType::Attack) && p.color == color.opposite() {
+                    v.push(Field::new(rank, file));
+                }
+                return BreakLoop::True;
+            }
+            Square::Padding => {
+                println!("This should not happen");
+                return BreakLoop::True;
+            }
+        }
+        BreakLoop::False
+    }
+
+    fn filter_free(&self, v: Vec<Field>) -> Vec<Field> {
+        v.into_iter()
+            .filter(|field| matches!(self.at(field.rank, field.file), Square::Empty))
+            .collect()
+    }
+
+    ///For non-sliding moves: Return only those fields that are either empty
+    /// or occuppied by a piece of color opposite.
+    /// This function is required for non-sliding moves and takes as input
+    /// a vector of all potential moves based on the piece's kind.
+    fn filter_free_or_opponent(&self, v: Vec<Field>, opposite: PieceColor) -> Vec<Field> {
+        v.into_iter()
+            .filter(|field| {
+                matches!(self.at(field.rank, field.file), Square::Empty)
+                    || if let Square::Full(p) = self.at(field.rank, field.file) {
+                        p.color == opposite
+                    } else {
+                        false
+                    }
+            })
+            .collect()
     }
 
     ///Example: Converts a to 1.
@@ -413,7 +484,7 @@ impl Board {
                 let tile = if (rank + file) % 2 == 0 {
                     tile.on_truecolor(158, 93, 30) //black
                 } else {
-                    tile.on_truecolor(205, 170, 125) //white
+                    tile.on_truecolor(155, 170, 125) //white
                 };
 
                 let tile = match square.color() {
@@ -530,6 +601,7 @@ pub enum Square {
     Padding,
 }
 
+#[derive(Clone, Copy)]
 pub enum MoveType {
     Default,
     Attack,
@@ -556,6 +628,12 @@ impl Default for Square {
     fn default() -> Self {
         Self::Empty
     }
+}
+
+#[derive(PartialEq)]
+enum BreakLoop {
+    True,
+    False,
 }
 
 #[derive(PartialEq, Debug)]

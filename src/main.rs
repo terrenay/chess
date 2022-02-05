@@ -23,12 +23,9 @@ fn main() {
     b.move_by_str("a4a5");
     b.move_by_str("a5a6");
     b.move_by_str("b8a6");
-    println!("{:?}", b.pseudo_legal_moves(6, 1, MoveType::Attack));
+    b.move_by_str("d2d3");
+    b.move_by_str("c1d2");
 
-    //TODO: Gibt Fehler, wenn knight ganz links am Rand steht, weil padding dort nur eins
-    //breit ist. Sollte ich auch auf 2 erhöhen (wie nach oben). Muss nur array size
-    //anpassen und die toBoard funktion :) Gott sei dank hab ich ja jetzt alles
-    //abhängig von rank und file gemacht haha
     //TODO: farbe von weissen feldern bisschen dunkler machen
 
     //b.move_by_str("a6c7");
