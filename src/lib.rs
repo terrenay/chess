@@ -158,7 +158,7 @@ impl Board {
                 PieceKind::King => self.pseudo_legal_king_moves(p.color, rank, file, move_type),
                 PieceKind::Rook => self.pseudo_legal_rook_moves(p.color, rank, file, move_type),
                 PieceKind::Bishop => self.pseudo_legal_bishop_moves(p.color, rank, file, move_type),
-                _ => Vec::new(),
+                PieceKind::Queen => self.pseudo_legal_queen_moves(p.color, rank, file, move_type),
             },
             Square::Empty => {
                 eprintln!(
@@ -365,15 +365,61 @@ impl Board {
 
         //Up right
         while rank + diff <= 8 && file + diff <= 8 {
-            if self.insert_or_break_loop(color, rank, file, move_type, &mut v) == BreakLoop::True {
+            if self.insert_or_break_loop(color, rank + diff, file + diff, move_type, &mut v)
+                == BreakLoop::True
+            {
                 break;
             }
             diff += 1;
         }
-        diff = 0;
+        diff = 1;
+
+        //Up left
+        while rank + diff <= 8 && file - diff >= 1 {
+            if self.insert_or_break_loop(color, rank + diff, file - diff, move_type, &mut v)
+                == BreakLoop::True
+            {
+                break;
+            }
+            diff += 1;
+        }
+        diff = 1;
+
+        //Down right
+        while rank - diff >= 1 && file + diff <= 8 {
+            if self.insert_or_break_loop(color, rank - diff, file + diff, move_type, &mut v)
+                == BreakLoop::True
+            {
+                break;
+            }
+            diff += 1;
+        }
+        diff = 1;
+
+        //Down left
+        while rank - diff >= 1 && file - diff >= 1 {
+            if self.insert_or_break_loop(color, rank - diff, file - diff, move_type, &mut v)
+                == BreakLoop::True
+            {
+                break;
+            }
+            diff += 1;
+        }
         v
     }
 
+    ///Inefficiency at its peak
+    fn pseudo_legal_queen_moves(
+        &self,
+        color: PieceColor,
+        rank: i8,
+        file: i8,
+        move_type: MoveType,
+    ) -> Vec<Field> {
+        let mut v = self.pseudo_legal_rook_moves(color, rank, file, move_type);
+        v.extend(self.pseudo_legal_bishop_moves(color, rank, file, move_type));
+        v
+    }
     ///This function is intended to be used in a loop for a sliding piece which follows that
     /// piece's move direction and checks each square for obstruction by an opponent or own piece.
     /// This function returns BreakLoop::True if the current square is full or padding.
@@ -398,7 +444,7 @@ impl Board {
                 return BreakLoop::True;
             }
             Square::Padding => {
-                println!("This should not happen");
+                eprintln!("This should not happen");
                 return BreakLoop::True;
             }
         }
@@ -484,7 +530,7 @@ impl Board {
                 let tile = if (rank + file) % 2 == 0 {
                     tile.on_truecolor(158, 93, 30) //black
                 } else {
-                    tile.on_truecolor(155, 170, 125) //white
+                    tile.on_truecolor(155, 120, 70) //white
                 };
 
                 let tile = match square.color() {
@@ -636,7 +682,7 @@ enum BreakLoop {
     False,
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub struct Field {
     rank: i8,
     file: i8,
@@ -672,99 +718,166 @@ mod tests {
     #[test]
     fn white_pawn_take_left() {
         let b = Board::from_fen("rnbqkbnr/pppp1ppp/8/3p4/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 1");
-        assert_eq!(
+        eq_fields(
             b.pseudo_legal_moves(4, 5, MoveType::Attack),
-            vec![Field::new(5, 4)]
+            vec![Field::new(5, 4)],
         );
     }
 
     #[test]
     fn white_pawn_not_take_center() {
         let b = Board::from_fen("rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 1");
-        assert_eq!(b.pseudo_legal_moves(4, 5, MoveType::Attack), vec![]);
+        eq_fields(b.pseudo_legal_moves(4, 5, MoveType::Attack), vec![]);
     }
 
     #[test]
     fn white_pawn_take_right() {
         let b = Board::from_fen("rnbqkbnr/pppp1ppp/8/5p2/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 1");
-        assert_eq!(
+        eq_fields(
             b.pseudo_legal_moves(4, 5, MoveType::Attack),
-            vec![Field::new(5, 6)]
+            vec![Field::new(5, 6)],
         );
     }
 
     #[test]
     fn black_pawn_take_left() {
         let b = Board::from_fen("rnbqkbnr/pppp1ppp/8/4p3/3P4/8/PPP1PPPP/RNBQKBNR w KQkq - 0 1");
-        assert_eq!(
+        eq_fields(
             b.pseudo_legal_moves(5, 5, MoveType::Attack),
-            vec![Field::new(4, 4)]
+            vec![Field::new(4, 4)],
         );
     }
 
     #[test]
     fn black_pawn_not_take_center() {
         let b = Board::from_fen("rnbqkbnr/ppp1pppp/8/3p4/3P4/8/PPP1PPPP/RNBQKBNR w KQkq - 0 1");
-        assert_eq!(b.pseudo_legal_moves(5, 4, MoveType::Attack), vec![]);
+        eq_fields(b.pseudo_legal_moves(5, 4, MoveType::Attack), vec![]);
     }
 
     #[test]
     fn black_pawn_take_right() {
         let b = Board::from_fen("rnbqkbnr/ppp1pppp/8/3p4/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 1");
-        assert_eq!(
+        eq_fields(
             b.pseudo_legal_moves(5, 4, MoveType::Attack),
-            vec![Field::new(4, 5)]
+            vec![Field::new(4, 5)],
         );
     }
 
     #[test]
     fn white_pawn_double_push() {
         let b = Board::new();
-        assert_eq!(
+        eq_fields(
             b.pseudo_legal_moves(2, 1, MoveType::Default),
-            vec![Field::new(3, 1), Field::new(4, 1)]
+            vec![Field::new(3, 1), Field::new(4, 1)],
         );
     }
 
     #[test]
     fn black_pawn_double_push() {
         let b = Board::new();
-        assert_eq!(
+        eq_fields(
             b.pseudo_legal_moves(7, 1, MoveType::Default),
-            vec![Field::new(6, 1), Field::new(5, 1)]
+            vec![Field::new(6, 1), Field::new(5, 1)],
         );
     }
 
     #[test]
     fn white_pawn_double_push_blocked() {
         let b = Board::from_fen("rnbqkbnr/1ppppppp/8/8/p7/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
-        assert_eq!(
+        eq_fields(
             b.pseudo_legal_moves(2, 1, MoveType::Default),
-            vec![Field::new(3, 1)]
+            vec![Field::new(3, 1)],
         );
     }
 
     #[test]
     fn black_pawn_double_push_blocked() {
         let b = Board::from_fen("rnbqkbnr/pppppppp/8/P7/8/8/1PPPPPPP/RNBQKBNR w KQkq - 0 1");
-        assert_eq!(
+        eq_fields(
             b.pseudo_legal_moves(7, 1, MoveType::Default),
-            vec![Field::new(6, 1)]
+            vec![Field::new(6, 1)],
         );
     }
 
     #[test]
     fn white_pawn_not_take_white_pawn() {
         let b = Board::from_fen("rnbqkbnr/pppppppp/8/8/8/4P3/PPPP1PPP/RNBQKBNR w KQkq - 0 1");
-        assert_eq!(b.pseudo_legal_moves(2, 4, MoveType::Attack), vec![]);
+        eq_fields(b.pseudo_legal_moves(2, 4, MoveType::Attack), vec![]);
     }
 
     #[test]
     fn white_knight_takes() {
         let b = Board::from_fen("rnbqkbnr/pp1ppppp/8/8/8/2p5/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
-        assert_eq!(
+        eq_fields(
             b.pseudo_legal_moves(1, 2, MoveType::Attack),
-            vec![Field::new(3, 1), Field::new(3, 3)]
+            vec![Field::new(3, 1), Field::new(3, 3)],
         );
+    }
+
+    #[test]
+    fn black_knight_corner_blocked() {
+        let b = Board::from_fen("n7/2p5/1p6/8/8/8/8/8 w - - 0 1");
+        eq_fields(b.pseudo_legal_moves(8, 1, MoveType::Attack), vec![]);
+    }
+
+    #[test]
+    fn black_knight_corner_takes() {
+        let b = Board::from_fen("n7/2p5/1P6/8/8/8/8/8 w - - 0 1");
+        eq_fields(
+            b.pseudo_legal_moves(8, 1, MoveType::Attack),
+            vec![Field::new(6, 2)],
+        );
+    }
+
+    #[test]
+    fn black_knight_edge_takes() {
+        let b = Board::from_fen("8/5p2/7n/8/6P1/8/8/8 w - - 0 1");
+        eq_fields(
+            b.pseudo_legal_moves(6, 8, MoveType::Attack),
+            vec![Field::new(8, 7), Field::new(5, 6), Field::new(4, 7)],
+        );
+    }
+
+    #[test]
+    fn black_knight_edge_blocked() {
+        let b = Board::from_fen("6p1/5p2/7n/5p2/6p1/8/8/8 w - - 0 1");
+        eq_fields(b.pseudo_legal_moves(6, 8, MoveType::Attack), vec![]);
+    }
+
+    #[test]
+    fn white_bishop_default_partially_blocked() {
+        let b = Board::from_fen("8/8/8/4R3/1p6/2B5/8/p7 w - - 0 1");
+        eq_fields(
+            b.pseudo_legal_moves(3, 3, MoveType::Default),
+            vec![
+                Field::new(2, 2),
+                Field::new(4, 4),
+                Field::new(2, 4),
+                Field::new(1, 5),
+            ],
+        );
+    }
+
+    #[test]
+    fn white_bishop_attack_partially_blocked() {
+        let b = Board::from_fen("8/8/8/4R3/1p6/2B5/8/p7 w - - 0 1");
+        eq_fields(
+            b.pseudo_legal_moves(3, 3, MoveType::Attack),
+            vec![
+                Field::new(2, 2),
+                Field::new(4, 4),
+                Field::new(2, 4),
+                Field::new(1, 5),
+                Field::new(4, 2),
+                Field::new(1, 1),
+            ],
+        );
+    }
+
+    ///Compare v1 and v2, ignoring the order of the fields
+    fn eq_fields(mut v1: Vec<Field>, mut v2: Vec<Field>) {
+        v1.sort_unstable();
+        v2.sort_unstable();
+        assert_eq!(v1, v2);
     }
 }

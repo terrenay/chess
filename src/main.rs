@@ -26,8 +26,6 @@ fn main() {
     b.move_by_str("d2d3");
     b.move_by_str("c1d2");
 
-    //TODO: farbe von weissen feldern bisschen dunkler machen
-
     //b.move_by_str("a6c7");
 
     /*b.move_by_str("e7e5");
