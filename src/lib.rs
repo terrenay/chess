@@ -12,12 +12,18 @@ impl Game {
     }
 }
 
+//Todo: should start to think about organizing this mess into multiple files
+
+//Todo: three separate functions to draw is quite ugly. There must be a better way!
+
+//Todo: user can enter "e2" and it shows possible moves from there
+
+//Todo: -------->> evaluate current board state! <<------
+
 struct BoardState {
     board: Board,
 }
 
-///10x12 Array.
-/// board[[2,1]] refers to the a8 square
 pub struct Board {
     board: Array2<Square>,
 }
@@ -98,44 +104,58 @@ impl Board {
     ///Check for piece move legality (attack or default) & obstruction.
     /// Does not yet check for checks or pins.
     pub fn move_piece(&mut self, from_rank: i8, from_file: i8, to_rank: i8, to_file: i8) {
-        //This check is basically redundant:
         let square = match self.at(from_rank, from_file) {
             Square::Full(p) => Square::Full(p),
-            _ => panic!(
-                "There is no piece on rank {}, file {}.",
-                from_rank, from_file
-            ),
+            _ => {
+                eprintln!(
+                    "There is no piece on rank {}, file {}.",
+                    from_rank, from_file
+                );
+                return;
+            }
         };
 
-        if self
+        //Ugly af i'm sorry
+        if !self
             .pseudo_legal_moves(from_rank, from_file, MoveType::Default)
             .contains(&Field::new(to_rank, to_file))
-            || self
+            && !self
                 .pseudo_legal_moves(from_rank, from_file, MoveType::Attack)
                 .contains(&Field::new(to_rank, to_file))
         {
-            eprintln!("allowed");
-        } else {
             eprintln!("not allowed");
+            return;
         }
+
         self.set(from_rank, from_file, Square::Empty);
         self.set(to_rank, to_file, square);
+        println!("Default moves: ");
+        self.draw_pseudo_legal_moves_and_prev_move(
+            from_rank,
+            from_file,
+            to_rank,
+            to_file,
+            MoveType::Default,
+        );
+        println!("Attacking moves: ");
+        self.draw_pseudo_legal_moves_and_prev_move(
+            from_rank,
+            from_file,
+            to_rank,
+            to_file,
+            MoveType::Attack,
+        );
     }
 
     ///Move piece by string like "e2e4", without checking for legality.
     pub fn move_by_str(&mut self, arg: &str) {
+        println!("--- NEXT MOVE: {} ---", arg);
         let mut chars = arg.chars();
-        let from_file = Board::file_letter_to_number(chars.next().unwrap());
-        let from_rank = chars.next().unwrap().to_digit(10).unwrap();
-        let to_file = Board::file_letter_to_number(chars.next().unwrap());
-        let to_rank = chars.next().unwrap().to_digit(10).unwrap();
-        self.move_piece(
-            from_rank as i8,
-            from_file as i8,
-            to_rank as i8,
-            to_file as i8,
-        );
-        self.draw();
+        let from_file = Board::file_letter_to_number(chars.next().unwrap()) as i8;
+        let from_rank = chars.next().unwrap().to_digit(10).unwrap() as i8;
+        let to_file = Board::file_letter_to_number(chars.next().unwrap()) as i8;
+        let to_rank = chars.next().unwrap().to_digit(10).unwrap() as i8;
+        self.move_piece(from_rank, from_file, to_rank, to_file);
     }
 
     ///When it's done, this should check for obstructions. Depends on the piece kind and
@@ -520,6 +540,7 @@ impl Board {
     /// another function)
     pub fn draw(&self) {
         for rank in (1..9).rev() {
+            print!("{}", rank);
             for file in 1..9 {
                 let square = self.at(rank, file);
                 let tile = match square.unicode_str() {
@@ -544,6 +565,110 @@ impl Board {
                 print!("{}", tile);
             }
             println!();
+        }
+        for i in 1..=8 {
+            print!(" {}", Board::number_to_file_letter(i));
+        }
+        println!();
+    }
+
+    pub fn draw_pseudo_legal_moves(&self, pos_rank: i8, pos_file: i8, move_type: MoveType) {
+        let v = self.pseudo_legal_moves(pos_rank, pos_file, move_type);
+        for rank in (1..9).rev() {
+            print!("{}", rank);
+            for file in 1..9 {
+                let square = self.at(rank, file);
+                let tile = match square.unicode_str() {
+                    Some(s) => s,
+                    None => continue,
+                };
+
+                let tile = if (rank + file) % 2 == 0 {
+                    tile.on_truecolor(158, 93, 30) //black
+                } else {
+                    tile.on_truecolor(155, 120, 70) //white
+                };
+
+                let tile = if v.contains(&Field::new(rank, file)) {
+                    tile.on_truecolor(255, 0, 0)
+                } else {
+                    tile
+                };
+
+                let tile = match square.color() {
+                    Some(color) => match color {
+                        PieceColor::Black => tile.black(),
+                        PieceColor::White => tile.white(),
+                    },
+                    None => tile,
+                };
+
+                print!("{}", tile);
+            }
+            println!();
+        }
+        for i in 1..=8 {
+            print!(" {}", Board::number_to_file_letter(i));
+        }
+        println!();
+    }
+
+    pub fn draw_pseudo_legal_moves_and_prev_move(
+        &self,
+        from_rank: i8,
+        from_file: i8,
+        to_rank: i8,
+        to_file: i8,
+        move_type: MoveType,
+    ) {
+        let v = self.pseudo_legal_moves(to_rank, to_file, move_type);
+        for rank in (1..9).rev() {
+            print!("{}", rank);
+            for file in 1..9 {
+                let square = self.at(rank, file);
+                let tile = match square.unicode_str() {
+                    Some(s) => s,
+                    None => continue,
+                };
+
+                let tile = if (rank + file) % 2 == 0 {
+                    tile.on_truecolor(158, 93, 30) //black
+                } else {
+                    tile.on_truecolor(155, 120, 70) //white
+                };
+
+                let tile = if (rank == from_rank && file == from_file)
+                    || (rank == to_rank && file == to_file)
+                {
+                    tile.on_truecolor(0, 0, 255)
+                } else {
+                    tile
+                };
+
+                let tile = if v.contains(&Field::new(rank, file)) {
+                    if rank == from_rank && file == from_file {
+                        tile.on_truecolor(150, 0, 150)
+                    } else {
+                        tile.on_truecolor(255, 0, 0)
+                    }
+                } else {
+                    tile
+                };
+
+                let tile = match square.color() {
+                    Some(color) => match color {
+                        PieceColor::Black => tile.black(),
+                        PieceColor::White => tile.white(),
+                    },
+                    None => tile,
+                };
+
+                print!("{}", tile);
+            }
+            println!();
+        }
+        for i in 1..=8 {
+            print!(" {}", Board::number_to_file_letter(i));
         }
         println!();
     }
