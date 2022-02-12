@@ -2,7 +2,7 @@
 use chess::*;
 use text_io::read;
 fn main() {
-    let mut b = Board::new();
+    let mut b = BoardState::new();
     b.draw();
     /*
     b.move_by_str("a2a4");
@@ -23,8 +23,10 @@ fn main() {
     /*b.move_by_str("e7e5");
     b.move_by_str("g1f3");
     b.move_by_str("b8b6");*/
+
     loop {
         let input: String = read!();
         b.move_by_str(input.as_str());
+        b.draw();
     }
 }

@@ -20,8 +20,63 @@ impl Game {
 
 //Todo: -------->> evaluate current board state! <<------
 
-struct BoardState {
-    board: Board,
+pub struct BoardState {
+    pub board: Board,
+    turn: PieceColor,
+    white_castling_right: bool,
+    black_castling_right: bool,
+    en_passant: Option<Field>,
+}
+
+impl BoardState {
+    pub fn new() -> Self {
+        Self {
+            board: Board::new(),
+            turn: PieceColor::White,
+            white_castling_right: true,
+            black_castling_right: true,
+            en_passant: None,
+        }
+    }
+
+    pub fn evaluate(&self) -> i32 {
+        let mut score_relative_to_turn = 0;
+        for rank in 1..=8 {
+            for file in 1..=8 {
+                if let Square::Full(p) = self.board.at(rank, file) {
+                    if p.color == self.turn {
+                        score_relative_to_turn += p.value();
+                    } else {
+                        score_relative_to_turn -= p.value();
+                    }
+                }
+            }
+        }
+        score_relative_to_turn
+    }
+
+    ///Move piece by string like "e2e4". Checks for pseudo-legality.
+    pub fn move_by_str(&mut self, arg: &str) {
+        println!("--- NEXT MOVE: {} ---", arg);
+        let mut chars = arg.chars();
+        let from_file = Board::file_letter_to_number(chars.next().unwrap()) as i8;
+        let from_rank = chars.next().unwrap().to_digit(10).unwrap() as i8;
+        let to_file = Board::file_letter_to_number(chars.next().unwrap()) as i8;
+        let to_rank = chars.next().unwrap().to_digit(10).unwrap() as i8;
+        self.board
+            .move_piece(from_rank, from_file, to_rank, to_file);
+        //TODO: ONLY CHANGE COLOUR IF ABOVE WAS SUCCESSFUL! Need Result<> type
+        self.turn = self.turn.opposite();
+    }
+
+    pub fn draw(&self) {
+        self.board.draw();
+        println!("Turn: {:?}", self.turn);
+        println!("White castling right: {:?}", self.white_castling_right);
+        println!("Black castling right: {:?}", self.black_castling_right);
+        println!("En passant square: {:?}", self.en_passant);
+        println!("EVALUATION: {}", self.evaluate());
+    }
 }
 
 pub struct Board {
@@ -47,7 +102,7 @@ impl Board {
     }
 
     ///Only field 1 works at the moment (only position layout, with no further info)
-    pub fn from_fen(fen: &str) -> Board {
+    fn from_fen(fen: &str) -> Board {
         let mut board = Array2::<Square>::default((12, 12));
         let mut rank = 8;
         let mut file = 1;
@@ -103,7 +158,7 @@ impl Board {
 
     ///Check for piece move legality (attack or default) & obstruction.
     /// Does not yet check for checks or pins.
-    pub fn move_piece(&mut self, from_rank: i8, from_file: i8, to_rank: i8, to_file: i8) {
+    fn move_piece(&mut self, from_rank: i8, from_file: i8, to_rank: i8, to_file: i8) {
         let square = match self.at(from_rank, from_file) {
             Square::Full(p) => Square::Full(p),
             _ => {
@@ -145,17 +200,6 @@ impl Board {
             to_file,
             MoveType::Attack,
         );
-    }
-
-    ///Move piece by string like "e2e4", without checking for legality.
-    pub fn move_by_str(&mut self, arg: &str) {
-        println!("--- NEXT MOVE: {} ---", arg);
-        let mut chars = arg.chars();
-        let from_file = Board::file_letter_to_number(chars.next().unwrap()) as i8;
-        let from_rank = chars.next().unwrap().to_digit(10).unwrap() as i8;
-        let to_file = Board::file_letter_to_number(chars.next().unwrap()) as i8;
-        let to_rank = chars.next().unwrap().to_digit(10).unwrap() as i8;
-        self.move_piece(from_rank, from_file, to_rank, to_file);
     }
 
     ///When it's done, this should check for obstructions. Depends on the piece kind and
@@ -750,6 +794,17 @@ impl Piece {
         Self {
             kind: PieceKind::King,
             color,
+        }
+    }
+
+    ///Returns value of a piece (in centipawns) irrespective of color.
+    fn value(&self) -> i32 {
+        match self.kind {
+            PieceKind::King => 200_000,
+            PieceKind::Queen => 900,
+            PieceKind::Rook => 500,
+            PieceKind::Bishop | PieceKind::Knight => 300,
+            PieceKind::Pawn => 100,
         }
     }
 
