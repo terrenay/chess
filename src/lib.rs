@@ -1,6 +1,9 @@
 #![allow(unused)]
+use std::fmt::{self, Display};
+
 use colored::Colorize;
 use ndarray::prelude::*;
+use thiserror::Error;
 
 const STARTING_POSITION: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 
@@ -20,6 +23,12 @@ impl Game {
 
 //Todo: -------->> evaluate current board state! <<------
 
+///Currently the idea is to have a single instance of BoardState that is then modified.
+/// The other option would be to clone it each ply, but that seems like a waste of
+/// resources.
+///
+/// For multithreading, I could later clone the BoardState at some node and have each
+/// thread modify its own copy downwards.
 pub struct BoardState {
     pub board: Board,
     turn: PieceColor,
@@ -56,26 +65,70 @@ impl BoardState {
     }
 
     ///Move piece by string like "e2e4". Checks for pseudo-legality.
+    #[allow(clippy::needless_return)]
     pub fn move_by_str(&mut self, arg: &str) {
-        println!("--- NEXT MOVE: {} ---", arg);
+        println!("\nTry to process input: {}", arg);
+
         let mut chars = arg.chars();
+
         let from_file = Board::file_letter_to_number(chars.next().unwrap()) as i8;
         let from_rank = chars.next().unwrap().to_digit(10).unwrap() as i8;
+
+        if let Square::Full(p) = self.board.at(from_rank, from_file) {
+            if p.color != self.turn {
+                eprintln!("{} to move!", self.turn.to_string().red());
+                return;
+            }
+        } else {
+            eprintln!(
+                "{}",
+                Error::NoPieceOnFieldError(Field::new(from_rank, from_file))
+                    .to_string()
+                    .red()
+            );
+            return;
+        }
+
         let to_file = Board::file_letter_to_number(chars.next().unwrap()) as i8;
         let to_rank = chars.next().unwrap().to_digit(10).unwrap() as i8;
-        self.board
-            .move_piece(from_rank, from_file, to_rank, to_file);
-        //TODO: ONLY CHANGE COLOUR IF ABOVE WAS SUCCESSFUL! Need Result<> type
+
+        match self
+            .board
+            .move_piece(from_rank, from_file, to_rank, to_file)
+        {
+            Ok(()) => self.end_ply(),
+            Err(e) => {
+                eprintln!("{}", e.to_string().red());
+                return;
+            }
+        }
+        //println!("Default moves: ");
+        //self.draw_prev_move(from_rank, from_file, to_rank, to_file, MoveType::Default);
+        //println!("Attacking moves: ");
+        //self.draw_prev_move(from_rank, from_file, to_rank, to_file, MoveType::Attack);
+    }
+
+    fn end_ply(&mut self) {
         self.turn = self.turn.opposite();
     }
 
     pub fn draw(&self) {
         self.board.draw();
+        self.print_state_info();
+    }
+
+    fn print_state_info(&self) {
         println!("Turn: {:?}", self.turn);
         println!("White castling right: {:?}", self.white_castling_right);
         println!("Black castling right: {:?}", self.black_castling_right);
         println!("En passant square: {:?}", self.en_passant);
         println!("EVALUATION: {}", self.evaluate());
+    }
+}
+
+impl Default for BoardState {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -91,11 +144,14 @@ impl Board {
     ///Readonly!
     /// Out-of-bounds are supported as far as padding goes. That is, rank 0 and rank -1
     /// would be padding rows, but rank -2 would panic.
+    ///
+    /// <b>Precondition: -1 <= rank, file <= 10
     fn at(&self, rank: i8, file: i8) -> Square {
         let (i, j) = Board::to_board(rank, file);
         self.board[[i, j]]
     }
 
+    /// <b>Precondition: -1 <= rank, file <= 10
     fn set(&mut self, rank: i8, file: i8, val: Square) {
         let (i, j) = Board::to_board(rank, file);
         self.board[[i, j]] = val;
@@ -158,48 +214,31 @@ impl Board {
 
     ///Check for piece move legality (attack or default) & obstruction.
     /// Does not yet check for checks or pins.
-    fn move_piece(&mut self, from_rank: i8, from_file: i8, to_rank: i8, to_file: i8) {
+    fn move_piece(
+        &mut self,
+        from_rank: i8,
+        from_file: i8,
+        to_rank: i8,
+        to_file: i8,
+    ) -> Result<(), Error> {
         let square = match self.at(from_rank, from_file) {
             Square::Full(p) => Square::Full(p),
-            _ => {
-                eprintln!(
-                    "There is no piece on rank {}, file {}.",
-                    from_rank, from_file
-                );
-                return;
-            }
+            _ => return Err(Error::NoPieceOnFieldError(Field::new(from_rank, from_file))),
         };
 
-        //Ugly af i'm sorry
         if !self
-            .pseudo_legal_moves(from_rank, from_file, MoveType::Default)
+            .pseudo_legal_moves(from_rank, from_file, MoveType::Default)?
             .contains(&Field::new(to_rank, to_file))
             && !self
-                .pseudo_legal_moves(from_rank, from_file, MoveType::Attack)
+                .pseudo_legal_moves(from_rank, from_file, MoveType::Attack)?
                 .contains(&Field::new(to_rank, to_file))
         {
-            eprintln!("not allowed");
-            return;
+            return Err(Error::BadMoveTargetError(Field::new(to_rank, to_file)));
         }
 
         self.set(from_rank, from_file, Square::Empty);
         self.set(to_rank, to_file, square);
-        println!("Default moves: ");
-        self.draw_pseudo_legal_moves_and_prev_move(
-            from_rank,
-            from_file,
-            to_rank,
-            to_file,
-            MoveType::Default,
-        );
-        println!("Attacking moves: ");
-        self.draw_pseudo_legal_moves_and_prev_move(
-            from_rank,
-            from_file,
-            to_rank,
-            to_file,
-            MoveType::Attack,
-        );
+        Ok(())
     }
 
     ///When it's done, this should check for obstructions. Depends on the piece kind and
@@ -214,26 +253,28 @@ impl Board {
     /// -sliding pieces brauchen viel zu lange für den check
     /// -sliding pieces müssten eigentlich nur eine richtung berechnen, wenn ich
     /// den vorgeschlagenen move, der überprüft wird, auch beachten würde
-    pub fn pseudo_legal_moves(&self, rank: i8, file: i8, move_type: MoveType) -> Vec<Field> {
+    pub fn pseudo_legal_moves(
+        &self,
+        rank: i8,
+        file: i8,
+        move_type: MoveType,
+    ) -> Result<Vec<Field>, Error> {
         match self.at(rank, file) {
             Square::Full(p) => match p.kind {
-                PieceKind::Pawn => self.pseudo_legal_pawn_moves(p.color, rank, file, move_type),
-                PieceKind::Knight => self.pseudo_legal_knight_moves(p.color, rank, file, move_type),
-                PieceKind::King => self.pseudo_legal_king_moves(p.color, rank, file, move_type),
-                PieceKind::Rook => self.pseudo_legal_rook_moves(p.color, rank, file, move_type),
-                PieceKind::Bishop => self.pseudo_legal_bishop_moves(p.color, rank, file, move_type),
-                PieceKind::Queen => self.pseudo_legal_queen_moves(p.color, rank, file, move_type),
+                PieceKind::Pawn => Ok(self.pseudo_legal_pawn_moves(p.color, rank, file, move_type)),
+                PieceKind::Knight => {
+                    Ok(self.pseudo_legal_knight_moves(p.color, rank, file, move_type))
+                }
+                PieceKind::King => Ok(self.pseudo_legal_king_moves(p.color, rank, file, move_type)),
+                PieceKind::Rook => Ok(self.pseudo_legal_rook_moves(p.color, rank, file, move_type)),
+                PieceKind::Bishop => {
+                    Ok(self.pseudo_legal_bishop_moves(p.color, rank, file, move_type))
+                }
+                PieceKind::Queen => {
+                    Ok(self.pseudo_legal_queen_moves(p.color, rank, file, move_type))
+                }
             },
-            Square::Empty => {
-                eprintln!(
-                    "Rank {}, file {} is empty, but pseudo legal moves inquired.",
-                    rank, file
-                );
-                Vec::new()
-            }
-            Square::Padding => {
-                panic!("valid rank & file gave a padding square")
-            }
+            _ => Err(Error::NoPieceOnFieldError(Field::new(rank, file))),
         }
     }
 
@@ -508,8 +549,7 @@ impl Board {
                 return BreakLoop::True;
             }
             Square::Padding => {
-                eprintln!("This should not happen");
-                return BreakLoop::True;
+                panic!("invalid argument for insert_or_break_loop")
             }
         }
         BreakLoop::False
@@ -570,6 +610,8 @@ impl Board {
     /// Input are coordinates on the actual chess board.
     /// Output are coordinates on the 2d array with padding included.
     /// Output coordinate has y coordinate first (like ndarray)
+    ///
+    /// <b>Precondition: -1 <= rank, file <= 10
     pub fn to_board(rank: i8, file: i8) -> (usize, usize) {
         //Rank is never bigger than 10, so 10-rank is guaranteed to be >= 0.
         //Rank 10 is needed in the knight's move generation if the knight is on
@@ -617,7 +659,9 @@ impl Board {
     }
 
     pub fn draw_pseudo_legal_moves(&self, pos_rank: i8, pos_file: i8, move_type: MoveType) {
-        let v = self.pseudo_legal_moves(pos_rank, pos_file, move_type);
+        let v = self
+            .pseudo_legal_moves(pos_rank, pos_file, move_type)
+            .unwrap();
         for rank in (1..9).rev() {
             print!("{}", rank);
             for file in 1..9 {
@@ -665,7 +709,9 @@ impl Board {
         to_file: i8,
         move_type: MoveType,
     ) {
-        let v = self.pseudo_legal_moves(to_rank, to_file, move_type);
+        let v = self
+            .pseudo_legal_moves(to_rank, to_file, move_type)
+            .unwrap();
         for rank in (1..9).rev() {
             print!("{}", rank);
             for file in 1..9 {
@@ -874,6 +920,17 @@ impl Field {
     }
 }
 
+impl Display for Field {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}{}",
+            Board::number_to_file_letter(self.file as usize),
+            self.rank
+        )
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum PieceColor {
     Black,
@@ -889,6 +946,23 @@ impl PieceColor {
     }
 }
 
+impl Display for PieceColor {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match *self {
+            PieceColor::Black => write!(f, "Black"),
+            PieceColor::White => write!(f, "White"),
+        }
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    #[error("square on {0} is empty or padding")]
+    NoPieceOnFieldError(Field),
+    #[error("cannot move to {0}")]
+    BadMoveTargetError(Field),
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -899,7 +973,7 @@ mod tests {
     fn white_pawn_take_left() {
         let b = Board::from_fen("rnbqkbnr/pppp1ppp/8/3p4/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 1");
         eq_fields(
-            b.pseudo_legal_moves(4, 5, MoveType::Attack),
+            b.pseudo_legal_moves(4, 5, MoveType::Attack).unwrap(),
             vec![Field::new(5, 4)],
         );
     }
@@ -907,14 +981,17 @@ mod tests {
     #[test]
     fn white_pawn_not_take_center() {
         let b = Board::from_fen("rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 1");
-        eq_fields(b.pseudo_legal_moves(4, 5, MoveType::Attack), vec![]);
+        eq_fields(
+            b.pseudo_legal_moves(4, 5, MoveType::Attack).unwrap(),
+            vec![],
+        );
     }
 
     #[test]
     fn white_pawn_take_right() {
         let b = Board::from_fen("rnbqkbnr/pppp1ppp/8/5p2/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 1");
         eq_fields(
-            b.pseudo_legal_moves(4, 5, MoveType::Attack),
+            b.pseudo_legal_moves(4, 5, MoveType::Attack).unwrap(),
             vec![Field::new(5, 6)],
         );
     }
@@ -923,7 +1000,7 @@ mod tests {
     fn black_pawn_take_left() {
         let b = Board::from_fen("rnbqkbnr/pppp1ppp/8/4p3/3P4/8/PPP1PPPP/RNBQKBNR w KQkq - 0 1");
         eq_fields(
-            b.pseudo_legal_moves(5, 5, MoveType::Attack),
+            b.pseudo_legal_moves(5, 5, MoveType::Attack).unwrap(),
             vec![Field::new(4, 4)],
         );
     }
@@ -931,14 +1008,17 @@ mod tests {
     #[test]
     fn black_pawn_not_take_center() {
         let b = Board::from_fen("rnbqkbnr/ppp1pppp/8/3p4/3P4/8/PPP1PPPP/RNBQKBNR w KQkq - 0 1");
-        eq_fields(b.pseudo_legal_moves(5, 4, MoveType::Attack), vec![]);
+        eq_fields(
+            b.pseudo_legal_moves(5, 4, MoveType::Attack).unwrap(),
+            vec![],
+        );
     }
 
     #[test]
     fn black_pawn_take_right() {
         let b = Board::from_fen("rnbqkbnr/ppp1pppp/8/3p4/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 1");
         eq_fields(
-            b.pseudo_legal_moves(5, 4, MoveType::Attack),
+            b.pseudo_legal_moves(5, 4, MoveType::Attack).unwrap(),
             vec![Field::new(4, 5)],
         );
     }
@@ -947,7 +1027,7 @@ mod tests {
     fn white_pawn_double_push() {
         let b = Board::new();
         eq_fields(
-            b.pseudo_legal_moves(2, 1, MoveType::Default),
+            b.pseudo_legal_moves(2, 1, MoveType::Default).unwrap(),
             vec![Field::new(3, 1), Field::new(4, 1)],
         );
     }
@@ -956,7 +1036,7 @@ mod tests {
     fn black_pawn_double_push() {
         let b = Board::new();
         eq_fields(
-            b.pseudo_legal_moves(7, 1, MoveType::Default),
+            b.pseudo_legal_moves(7, 1, MoveType::Default).unwrap(),
             vec![Field::new(6, 1), Field::new(5, 1)],
         );
     }
@@ -965,7 +1045,7 @@ mod tests {
     fn white_pawn_double_push_blocked() {
         let b = Board::from_fen("rnbqkbnr/1ppppppp/8/8/p7/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
         eq_fields(
-            b.pseudo_legal_moves(2, 1, MoveType::Default),
+            b.pseudo_legal_moves(2, 1, MoveType::Default).unwrap(),
             vec![Field::new(3, 1)],
         );
     }
@@ -974,7 +1054,7 @@ mod tests {
     fn black_pawn_double_push_blocked() {
         let b = Board::from_fen("rnbqkbnr/pppppppp/8/P7/8/8/1PPPPPPP/RNBQKBNR w KQkq - 0 1");
         eq_fields(
-            b.pseudo_legal_moves(7, 1, MoveType::Default),
+            b.pseudo_legal_moves(7, 1, MoveType::Default).unwrap(),
             vec![Field::new(6, 1)],
         );
     }
@@ -982,14 +1062,17 @@ mod tests {
     #[test]
     fn white_pawn_not_take_white_pawn() {
         let b = Board::from_fen("rnbqkbnr/pppppppp/8/8/8/4P3/PPPP1PPP/RNBQKBNR w KQkq - 0 1");
-        eq_fields(b.pseudo_legal_moves(2, 4, MoveType::Attack), vec![]);
+        eq_fields(
+            b.pseudo_legal_moves(2, 4, MoveType::Attack).unwrap(),
+            vec![],
+        );
     }
 
     #[test]
     fn white_knight_takes() {
         let b = Board::from_fen("rnbqkbnr/pp1ppppp/8/8/8/2p5/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
         eq_fields(
-            b.pseudo_legal_moves(1, 2, MoveType::Attack),
+            b.pseudo_legal_moves(1, 2, MoveType::Attack).unwrap(),
             vec![Field::new(3, 1), Field::new(3, 3)],
         );
     }
@@ -997,14 +1080,17 @@ mod tests {
     #[test]
     fn black_knight_corner_blocked() {
         let b = Board::from_fen("n7/2p5/1p6/8/8/8/8/8 w - - 0 1");
-        eq_fields(b.pseudo_legal_moves(8, 1, MoveType::Attack), vec![]);
+        eq_fields(
+            b.pseudo_legal_moves(8, 1, MoveType::Attack).unwrap(),
+            vec![],
+        );
     }
 
     #[test]
     fn black_knight_corner_takes() {
         let b = Board::from_fen("n7/2p5/1P6/8/8/8/8/8 w - - 0 1");
         eq_fields(
-            b.pseudo_legal_moves(8, 1, MoveType::Attack),
+            b.pseudo_legal_moves(8, 1, MoveType::Attack).unwrap(),
             vec![Field::new(6, 2)],
         );
     }
@@ -1013,7 +1099,7 @@ mod tests {
     fn black_knight_edge_takes() {
         let b = Board::from_fen("8/5p2/7n/8/6P1/8/8/8 w - - 0 1");
         eq_fields(
-            b.pseudo_legal_moves(6, 8, MoveType::Attack),
+            b.pseudo_legal_moves(6, 8, MoveType::Attack).unwrap(),
             vec![Field::new(8, 7), Field::new(5, 6), Field::new(4, 7)],
         );
     }
@@ -1021,14 +1107,17 @@ mod tests {
     #[test]
     fn black_knight_edge_blocked() {
         let b = Board::from_fen("6p1/5p2/7n/5p2/6p1/8/8/8 w - - 0 1");
-        eq_fields(b.pseudo_legal_moves(6, 8, MoveType::Attack), vec![]);
+        eq_fields(
+            b.pseudo_legal_moves(6, 8, MoveType::Attack).unwrap(),
+            vec![],
+        );
     }
 
     #[test]
     fn white_bishop_default_partially_blocked() {
         let b = Board::from_fen("8/8/8/4R3/1p6/2B5/8/p7 w - - 0 1");
         eq_fields(
-            b.pseudo_legal_moves(3, 3, MoveType::Default),
+            b.pseudo_legal_moves(3, 3, MoveType::Default).unwrap(),
             vec![
                 Field::new(2, 2),
                 Field::new(4, 4),
@@ -1042,7 +1131,7 @@ mod tests {
     fn white_bishop_attack_partially_blocked() {
         let b = Board::from_fen("8/8/8/4R3/1p6/2B5/8/p7 w - - 0 1");
         eq_fields(
-            b.pseudo_legal_moves(3, 3, MoveType::Attack),
+            b.pseudo_legal_moves(3, 3, MoveType::Attack).unwrap(),
             vec![
                 Field::new(2, 2),
                 Field::new(4, 4),
