@@ -1,19 +1,11 @@
-#![allow(unused)]
+mod evaluation;
+
 use std::fmt::{self, Display};
 
 use colored::Colorize;
 use ndarray::prelude::*;
-use thiserror::Error;
 
 const STARTING_POSITION: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
-
-struct Game {}
-
-impl Game {
-    fn new() -> Game {
-        Game {}
-    }
-}
 
 //Todo: should start to think about organizing this mess into multiple files
 
@@ -22,6 +14,12 @@ impl Game {
 //Todo: user can enter "e2" and it shows possible moves from there
 
 //Todo: -------->> evaluate current board state! <<------
+/*1: piece tables für alle piece in berechnung miteinfliessen lassen (static)
+2: negamax algorithmus!
+3: castling erlauben
+4: pawn promotion erlauben */
+//5: doubled pawns, bishop pair miteinfliessen lassen
+//Todo: kopien von board durch referenzen ersetzen
 
 ///Currently the idea is to have a single instance of BoardState that is then modified.
 /// The other option would be to clone it each ply, but that seems like a waste of
@@ -49,19 +47,7 @@ impl BoardState {
     }
 
     pub fn evaluate(&self) -> i32 {
-        let mut score_relative_to_turn = 0;
-        for rank in 1..=8 {
-            for file in 1..=8 {
-                if let Square::Full(p) = self.board.at(rank, file) {
-                    if p.color == self.turn {
-                        score_relative_to_turn += p.value();
-                    } else {
-                        score_relative_to_turn -= p.value();
-                    }
-                }
-            }
-        }
-        score_relative_to_turn
+        evaluation::evaluate(self)
     }
 
     ///Move piece by string like "e2e4". Checks for pseudo-legality.
@@ -82,7 +68,7 @@ impl BoardState {
         } else {
             eprintln!(
                 "{}",
-                Error::NoPieceOnFieldError(Field::new(from_rank, from_file))
+                Error::NoPieceOnField(Field::new(from_rank, from_file))
                     .to_string()
                     .red()
             );
@@ -223,7 +209,7 @@ impl Board {
     ) -> Result<(), Error> {
         let square = match self.at(from_rank, from_file) {
             Square::Full(p) => Square::Full(p),
-            _ => return Err(Error::NoPieceOnFieldError(Field::new(from_rank, from_file))),
+            _ => return Err(Error::NoPieceOnField(Field::new(from_rank, from_file))),
         };
 
         if !self
@@ -233,7 +219,7 @@ impl Board {
                 .pseudo_legal_moves(from_rank, from_file, MoveType::Attack)?
                 .contains(&Field::new(to_rank, to_file))
         {
-            return Err(Error::BadMoveTargetError(Field::new(to_rank, to_file)));
+            return Err(Error::BadMoveTarget(Field::new(to_rank, to_file)));
         }
 
         self.set(from_rank, from_file, Square::Empty);
@@ -274,7 +260,7 @@ impl Board {
                     Ok(self.pseudo_legal_queen_moves(p.color, rank, file, move_type))
                 }
             },
-            _ => Err(Error::NoPieceOnFieldError(Field::new(rank, file))),
+            _ => Err(Error::NoPieceOnField(Field::new(rank, file))),
         }
     }
 
@@ -770,12 +756,6 @@ impl Default for Board {
     }
 }
 
-struct Player1 {
-    pieces: Vec<Piece>,
-}
-
-struct Player2 {}
-
 #[derive(Clone, Copy, Debug)]
 enum PieceKind {
     Pawn,
@@ -793,14 +773,6 @@ pub struct Piece {
 }
 
 impl Piece {
-    fn kind(&self) -> PieceKind {
-        self.kind
-    }
-
-    fn color(&self) -> PieceColor {
-        self.color
-    }
-
     fn pawn(color: PieceColor) -> Self {
         Self {
             kind: PieceKind::Pawn,
@@ -840,17 +812,6 @@ impl Piece {
         Self {
             kind: PieceKind::King,
             color,
-        }
-    }
-
-    ///Returns value of a piece (in centipawns) irrespective of color.
-    fn value(&self) -> i32 {
-        match self.kind {
-            PieceKind::King => 200_000,
-            PieceKind::Queen => 900,
-            PieceKind::Rook => 500,
-            PieceKind::Bishop | PieceKind::Knight => 300,
-            PieceKind::Pawn => 100,
         }
     }
 
@@ -958,9 +919,9 @@ impl Display for PieceColor {
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("square on {0} is empty or padding")]
-    NoPieceOnFieldError(Field),
+    NoPieceOnField(Field),
     #[error("cannot move to {0}")]
-    BadMoveTargetError(Field),
+    BadMoveTarget(Field),
 }
 
 #[cfg(test)]
