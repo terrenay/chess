@@ -30,9 +30,11 @@ const STARTING_POSITION: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w K
 pub struct BoardState {
     pub board: Board,
     turn: PieceColor,
-    white_castling_right: bool,
-    black_castling_right: bool,
+    white_castling_rights: bool,
+    black_castling_rights: bool,
     en_passant: Option<Field>,
+    moves: Vec<Move>,
+    taken: Vec<UniquePiece>,
 }
 
 impl BoardState {
@@ -40,14 +42,37 @@ impl BoardState {
         Self {
             board: Board::new(),
             turn: PieceColor::White,
-            white_castling_right: true,
-            black_castling_right: true,
+            white_castling_rights: true,
+            black_castling_rights: true,
             en_passant: None,
+            moves: vec![],
+            taken: vec![],
         }
     }
 
     pub fn evaluate(&self) -> i32 {
         evaluation::evaluate(self)
+    }
+
+    ///For every legal move in the current position, this function calls make,
+    /// then calls itself recursively, and finally calls unmake.
+    ///
+    /// Depth is how many recursive calls it should do.
+    fn min_max_helper(&self, depth: i32) -> i32 {
+        if depth == 0 {
+            self.evaluate()
+        } else {
+            let mut max = i32::MIN;
+            for m in self.generate_moves().iter() {
+                self.make(m); //Assume the move is legal. This must be ensured by genmoves.
+                let score = -self.min_max_helper(depth - 1);
+                self.unmake(m);
+                if score > max {
+                    max = score;
+                }
+            }
+            max
+        }
     }
 
     ///Move piece by string like "e2e4". Checks for pseudo-legality.
@@ -88,10 +113,6 @@ impl BoardState {
                 return;
             }
         }
-        //println!("Default moves: ");
-        //self.draw_prev_move(from_rank, from_file, to_rank, to_file, MoveType::Default);
-        //println!("Attacking moves: ");
-        //self.draw_prev_move(from_rank, from_file, to_rank, to_file, MoveType::Attack);
     }
 
     fn end_ply(&mut self) {
@@ -105,16 +126,75 @@ impl BoardState {
 
     fn print_state_info(&self) {
         println!("Turn: {:?}", self.turn);
-        println!("White castling right: {:?}", self.white_castling_right);
-        println!("Black castling right: {:?}", self.black_castling_right);
+        println!("White castling right: {:?}", self.white_castling_rights);
+        println!("Black castling right: {:?}", self.black_castling_rights);
         println!("En passant square: {:?}", self.en_passant);
         println!("EVALUATION: {}", self.evaluate());
+    }
+
+    fn generate_moves(&self) -> Vec<Move> {
+        //Going through all fields, checking whether there is a piece, then calling
+        //pseudo_legal_moves feels quite inefficient...
+
+        //Eventually I want to keep a list of currently alive pieces. Then only go through
+        //those //todo!
+        let mut v: Vec<Move> = vec![];
+        for rank in 1..=8 {
+            for file in 1..=8 {
+                if let Square::Full(p) = self.board.at(rank, file) {
+                    if p.color == self.turn {
+                        v.extend(
+                            self.board
+                                .pseudo_legal_moves(rank, file, MoveType::DefaultOrAttack)
+                                .unwrap(),
+                        );
+                    }
+                }
+            }
+        }
+        v
+    }
+
+    fn make(&self, m: &Move) {
+        todo!()
+        //Add the moves to self.moves, and if attacking move, add the taken piece to taken
+    }
+
+    fn unmake(&self, m: &Move) {
+        todo!()
+        //Revert the above by popping from the stack
     }
 }
 
 impl Default for BoardState {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+///Every piece on the board corresponds to one instance of UniquePiece.
+/// The instances stay the same over several moves, only their positions change.
+/// This is used in the make() and unmake() functions of BoardState.
+struct UniquePiece {
+    piece: Piece,
+    field: Field,
+}
+
+///If move_type==Attack, muss target auf stack gepusht/gepoppt werden!
+#[derive(PartialEq)]
+pub struct Move {
+    from: Field,
+    to: Field,
+    move_type: MoveType,
+}
+
+impl Move {
+    fn new(from: Field, to: Field, move_type: MoveType) -> Self {
+        Move {
+            from,
+            to,
+            move_type,
+        }
     }
 }
 
@@ -213,11 +293,8 @@ impl Board {
         };
 
         if !self
-            .pseudo_legal_moves(from_rank, from_file, MoveType::Default)?
+            .pseudo_legal_move_fields(from_rank, from_file, MoveType::DefaultOrAttack)?
             .contains(&Field::new(to_rank, to_file))
-            && !self
-                .pseudo_legal_moves(from_rank, from_file, MoveType::Attack)?
-                .contains(&Field::new(to_rank, to_file))
         {
             return Err(Error::BadMoveTarget(Field::new(to_rank, to_file)));
         }
@@ -225,6 +302,19 @@ impl Board {
         self.set(from_rank, from_file, Square::Empty);
         self.set(to_rank, to_file, square);
         Ok(())
+    }
+
+    pub fn pseudo_legal_moves(
+        &self,
+        rank: i8,
+        file: i8,
+        move_type: MoveType,
+    ) -> Result<Vec<Move>, Error> {
+        let fields = self.pseudo_legal_move_fields(rank, file, move_type)?;
+        Ok(fields
+            .into_iter()
+            .map(|field| Move::new(Field::new(rank, file), field, move_type))
+            .collect())
     }
 
     ///When it's done, this should check for obstructions. Depends on the piece kind and
@@ -239,7 +329,7 @@ impl Board {
     /// -sliding pieces brauchen viel zu lange für den check
     /// -sliding pieces müssten eigentlich nur eine richtung berechnen, wenn ich
     /// den vorgeschlagenen move, der überprüft wird, auch beachten würde
-    pub fn pseudo_legal_moves(
+    fn pseudo_legal_move_fields(
         &self,
         rank: i8,
         file: i8,
@@ -247,24 +337,30 @@ impl Board {
     ) -> Result<Vec<Field>, Error> {
         match self.at(rank, file) {
             Square::Full(p) => match p.kind {
-                PieceKind::Pawn => Ok(self.pseudo_legal_pawn_moves(p.color, rank, file, move_type)),
-                PieceKind::Knight => {
-                    Ok(self.pseudo_legal_knight_moves(p.color, rank, file, move_type))
+                PieceKind::Pawn => {
+                    Ok(self.pseudo_legal_pawn_move_fields(p.color, rank, file, move_type))
                 }
-                PieceKind::King => Ok(self.pseudo_legal_king_moves(p.color, rank, file, move_type)),
-                PieceKind::Rook => Ok(self.pseudo_legal_rook_moves(p.color, rank, file, move_type)),
+                PieceKind::Knight => {
+                    Ok(self.pseudo_legal_knight_move_fields(p.color, rank, file, move_type))
+                }
+                PieceKind::King => {
+                    Ok(self.pseudo_legal_king_move_fields(p.color, rank, file, move_type))
+                }
+                PieceKind::Rook => {
+                    Ok(self.pseudo_legal_rook_move_fields(p.color, rank, file, move_type))
+                }
                 PieceKind::Bishop => {
-                    Ok(self.pseudo_legal_bishop_moves(p.color, rank, file, move_type))
+                    Ok(self.pseudo_legal_bishop_move_fields(p.color, rank, file, move_type))
                 }
                 PieceKind::Queen => {
-                    Ok(self.pseudo_legal_queen_moves(p.color, rank, file, move_type))
+                    Ok(self.pseudo_legal_queen_move_fields(p.color, rank, file, move_type))
                 }
             },
             _ => Err(Error::NoPieceOnField(Field::new(rank, file))),
         }
     }
 
-    fn pseudo_legal_pawn_moves(
+    fn pseudo_legal_pawn_move_fields(
         &self,
         color: PieceColor,
         rank: i8,
@@ -290,6 +386,42 @@ impl Board {
                 MoveType::Attack => {
                     let mut v = vec![];
 
+                    //Black pawn attacks down to the left
+                    match self.at(rank - 1, file - 1) {
+                        Square::Full(p) if matches!(p.color, PieceColor::White) => {
+                            v.push(Field::new(rank - 1, file - 1));
+                        }
+                        _ => (),
+                    }
+
+                    //Black pawn attacks down to the right
+                    match self.at(rank - 1, file + 1) {
+                        //Right attack
+                        Square::Full(p) if matches!(p.color, PieceColor::White) => {
+                            v.push(Field::new(rank - 1, file + 1));
+                        }
+                        _ => (),
+                    }
+                    v
+                }
+                //This is the worst sin I have ever committed.
+                //Once I have time, definitely refactor this so it's not a copy of
+                //both above cases!
+                MoveType::DefaultOrAttack => {
+                    let mut v = match self.at(rank - 1, file) {
+                        Square::Empty => {
+                            let mut v = vec![Field::new(rank - 1, file)];
+
+                            if rank == 7 {
+                                //Double push
+                                if let Square::Empty = self.at(rank - 2, file) {
+                                    v.push(Field::new(rank - 2, file));
+                                }
+                            }
+                            v
+                        }
+                        _ => vec![],
+                    };
                     //Black pawn attacks down to the left
                     match self.at(rank - 1, file - 1) {
                         Square::Full(p) if matches!(p.color, PieceColor::White) => {
@@ -344,11 +476,44 @@ impl Board {
                     }
                     v
                 }
+                MoveType::DefaultOrAttack => {
+                    let mut v = match self.at(rank + 1, file) {
+                        Square::Empty => {
+                            let mut v = vec![Field::new(rank + 1, file)];
+
+                            if rank == 2 {
+                                //Double push
+                                if let Square::Empty = self.at(rank + 2, file) {
+                                    v.push(Field::new(rank + 2, file));
+                                }
+                            }
+                            v
+                        }
+                        _ => vec![],
+                    };
+
+                    //White pawn attacks up to the left
+                    match self.at(rank + 1, file - 1) {
+                        Square::Full(p) if matches!(p.color, PieceColor::Black) => {
+                            v.push(Field::new(rank + 1, file - 1));
+                        }
+                        _ => (),
+                    }
+
+                    //White pawn attacks up to the right
+                    match self.at(rank + 1, file + 1) {
+                        Square::Full(p) if matches!(p.color, PieceColor::Black) => {
+                            v.push(Field::new(rank + 1, file + 1));
+                        }
+                        _ => (),
+                    }
+                    v
+                }
             },
         }
     }
 
-    fn pseudo_legal_knight_moves(
+    fn pseudo_legal_knight_move_fields(
         &self,
         color: PieceColor,
         rank: i8,
@@ -370,6 +535,10 @@ impl Board {
             MoveType::Default => self.filter_free(v),
             MoveType::Attack => {
                 let opposite = color.opposite();
+                self.filter_opponent(v, opposite)
+            }
+            MoveType::DefaultOrAttack => {
+                let opposite = color.opposite();
                 self.filter_free_or_opponent(v, opposite)
             }
         }
@@ -378,7 +547,7 @@ impl Board {
     ///This is quite scuffed at the moment since king moves are quite useless
     /// without checking for checks...
     /// todo: enemy checks
-    fn pseudo_legal_king_moves(
+    fn pseudo_legal_king_move_fields(
         &self,
         color: PieceColor,
         rank: i8,
@@ -399,13 +568,17 @@ impl Board {
             MoveType::Default => self.filter_free(v),
             MoveType::Attack => {
                 let opposite = color.opposite();
+                self.filter_opponent(v, opposite)
+            }
+            MoveType::DefaultOrAttack => {
+                let opposite = color.opposite();
                 self.filter_free_or_opponent(v, opposite)
             }
         }
     }
 
     ///todo: movetype attack wird noch ignoriert
-    fn pseudo_legal_rook_moves(
+    fn pseudo_legal_rook_move_fields(
         &self,
         color: PieceColor,
         rank: i8,
@@ -440,7 +613,7 @@ impl Board {
         v
     }
 
-    fn pseudo_legal_bishop_moves(
+    fn pseudo_legal_bishop_move_fields(
         &self,
         color: PieceColor,
         rank: i8,
@@ -500,15 +673,15 @@ impl Board {
     }
 
     ///Inefficiency at its peak
-    fn pseudo_legal_queen_moves(
+    fn pseudo_legal_queen_move_fields(
         &self,
         color: PieceColor,
         rank: i8,
         file: i8,
         move_type: MoveType,
     ) -> Vec<Field> {
-        let mut v = self.pseudo_legal_rook_moves(color, rank, file, move_type);
-        v.extend(self.pseudo_legal_bishop_moves(color, rank, file, move_type));
+        let mut v = self.pseudo_legal_rook_move_fields(color, rank, file, move_type);
+        v.extend(self.pseudo_legal_bishop_move_fields(color, rank, file, move_type));
         v
     }
     ///This function is intended to be used in a loop for a sliding piece which follows that
@@ -529,8 +702,13 @@ impl Board {
                 v.push(Field::new(rank, file));
             }
             Square::Full(p) => {
-                if matches!(move_type, MoveType::Attack) && p.color == color.opposite() {
-                    v.push(Field::new(rank, file));
+                match move_type {
+                    MoveType::Attack | MoveType::DefaultOrAttack => {
+                        if p.color == color.opposite() {
+                            v.push(Field::new(rank, file));
+                        }
+                    }
+                    MoveType::Default => (),
                 }
                 return BreakLoop::True;
             }
@@ -551,6 +729,18 @@ impl Board {
     /// or occuppied by a piece of color opposite.
     /// This function is required for non-sliding moves and takes as input
     /// a vector of all potential moves based on the piece's kind.
+    fn filter_opponent(&self, v: Vec<Field>, opposite: PieceColor) -> Vec<Field> {
+        v.into_iter()
+            .filter(|field| {
+                if let Square::Full(p) = self.at(field.rank, field.file) {
+                    p.color == opposite
+                } else {
+                    false
+                }
+            })
+            .collect()
+    }
+
     fn filter_free_or_opponent(&self, v: Vec<Field>, opposite: PieceColor) -> Vec<Field> {
         v.into_iter()
             .filter(|field| {
@@ -663,7 +853,11 @@ impl Board {
                     tile.on_truecolor(155, 120, 70) //white
                 };
 
-                let tile = if v.contains(&Field::new(rank, file)) {
+                let tile = if v.contains(&Move::new(
+                    Field::new(pos_rank, pos_file),
+                    Field::new(rank, file),
+                    MoveType::DefaultOrAttack,
+                )) {
                     tile.on_truecolor(255, 0, 0)
                 } else {
                     tile
@@ -721,7 +915,11 @@ impl Board {
                     tile
                 };
 
-                let tile = if v.contains(&Field::new(rank, file)) {
+                let tile = if v.contains(&Move::new(
+                    Field::new(from_rank, from_file),
+                    Field::new(rank, file),
+                    MoveType::DefaultOrAttack,
+                )) {
                     if rank == from_rank && file == from_file {
                         tile.on_truecolor(150, 0, 150)
                     } else {
@@ -834,10 +1032,11 @@ pub enum Square {
     Padding,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 pub enum MoveType {
     Default,
     Attack,
+    DefaultOrAttack,
 }
 
 impl Square {
@@ -923,7 +1122,7 @@ pub enum Error {
     #[error("cannot move to {0}")]
     BadMoveTarget(Field),
 }
-
+/*
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1111,3 +1310,4 @@ mod tests {
         assert_eq!(v1, v2);
     }
 }
+*/
