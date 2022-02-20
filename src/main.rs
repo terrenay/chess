@@ -25,7 +25,7 @@ fn main() {
     b.move_by_str("b8b6");*/
     println!("{}", b.min_max_helper(4));
     unsafe {
-        println!("{}", COUNT);
+        println!("count: {}", COUNT);
     }
 
     /*loop {
