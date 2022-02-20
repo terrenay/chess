@@ -23,10 +23,20 @@ fn main() {
     /*b.move_by_str("e7e5");
     b.move_by_str("g1f3");
     b.move_by_str("b8b6");*/
+    println!("{}", b.min_max_helper(4));
+    unsafe {
+        println!("{}", COUNT);
+    }
 
-    loop {
+    /*loop {
+        print!("Next move: ");
         let input: String = read!();
         b.move_by_str(input.as_str());
         b.draw();
-    }
+        b.min_max_helper(1);
+        /*println!("All valid moves in this position:");
+        for m in b.generate_moves() {
+            println!("{}", m);
+        }*/
+    }*/
 }

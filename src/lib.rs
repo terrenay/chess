@@ -6,6 +6,7 @@ use colored::Colorize;
 use ndarray::prelude::*;
 
 const STARTING_POSITION: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+pub static mut COUNT: i32 = 0;
 
 //Todo: should start to think about organizing this mess into multiple files
 
@@ -34,7 +35,7 @@ pub struct BoardState {
     black_castling_rights: bool,
     en_passant: Option<Field>,
     moves: Vec<Move>,
-    taken: Vec<UniquePiece>,
+    taken: Vec<Piece>,
 }
 
 impl BoardState {
@@ -51,6 +52,9 @@ impl BoardState {
     }
 
     pub fn evaluate(&self) -> i32 {
+        unsafe {
+            COUNT += 1;
+        }
         evaluation::evaluate(self)
     }
 
@@ -58,19 +62,23 @@ impl BoardState {
     /// then calls itself recursively, and finally calls unmake.
     ///
     /// Depth is how many recursive calls it should do.
-    fn min_max_helper(&self, depth: i32) -> i32 {
+    pub fn min_max_helper(&mut self, depth: i32) -> i32 {
         if depth == 0 {
             self.evaluate()
         } else {
-            let mut max = i32::MIN;
-            for m in self.generate_moves().iter() {
+            let mut max = -i32::MAX;
+            for m in self.generate_moves() {
                 self.make(m); //Assume the move is legal. This must be ensured by genmoves.
+                              //println!("AFTER MAKE {}", m);
+
+                //self.draw();
                 let score = -self.min_max_helper(depth - 1);
-                self.unmake(m);
+                self.unmake();
                 if score > max {
                     max = score;
                 }
             }
+            //println!("Max was: {}", max);
             max
         }
     }
@@ -100,23 +108,31 @@ impl BoardState {
             return;
         }
 
+        //From here on we can be sure that it's the correct side to move and the square is
+        //actually full.
+
         let to_file = Board::file_letter_to_number(chars.next().unwrap()) as i8;
         let to_rank = chars.next().unwrap().to_digit(10).unwrap() as i8;
 
-        match self
-            .board
-            .move_piece(from_rank, from_file, to_rank, to_file)
-        {
-            Ok(()) => self.end_ply(),
-            Err(e) => {
-                eprintln!("{}", e.to_string().red());
-                return;
-            }
-        }
-    }
+        let from = Field::new(from_rank, from_file);
+        let to = Field::new(to_rank, to_file);
+        let next_move = Move::new(from, to, MoveType::DefaultOrAttack);
 
-    fn end_ply(&mut self) {
-        self.turn = self.turn.opposite();
+        if !self
+            .board
+            .pseudo_legal_move_fields(from_rank, from_file, MoveType::DefaultOrAttack)
+            .unwrap()
+            .contains(&to)
+        {
+            eprintln!(
+                "{}",
+                Error::BadMoveTarget(Field::new(to_rank, to_file))
+                    .to_string()
+                    .red()
+            );
+        }
+
+        self.make(next_move);
     }
 
     pub fn draw(&self) {
@@ -132,7 +148,7 @@ impl BoardState {
         println!("EVALUATION: {}", self.evaluate());
     }
 
-    fn generate_moves(&self) -> Vec<Move> {
+    pub fn generate_moves(&self) -> Vec<Move> {
         //Going through all fields, checking whether there is a piece, then calling
         //pseudo_legal_moves feels quite inefficient...
 
@@ -155,13 +171,77 @@ impl BoardState {
         v
     }
 
-    fn make(&self, m: &Move) {
-        todo!()
-        //Add the moves to self.moves, and if attacking move, add the taken piece to taken
+    ///Assumes the move is legal!
+    fn make(&mut self, m: Move) {
+        //println!("make start {}", m);
+        self.moves.push(m);
+        if let Square::Full(moving_piece) = self.board.at(m.from.rank, m.from.file) {
+            match m.move_type {
+                MoveType::Default => (),
+
+                MoveType::Attack => {
+                    if let Square::Full(target) = self.board.at(m.to.rank, m.to.file) {
+                        self.taken.push(target);
+                    } else {
+                        panic!("MoveType attack but empty target");
+                    }
+                }
+                MoveType::DefaultOrAttack => {
+                    if let Square::Full(target) = self.board.at(m.to.rank, m.to.file) {
+                        self.taken.push(target);
+                    }
+                }
+            }
+
+            self.board.set(m.from.rank, m.from.file, Square::Empty);
+            self.board
+                .set(m.to.rank, m.to.file, Square::Full(moving_piece));
+        }
+        self.turn = self.turn.opposite();
+        //println!("make end {}", m);
+        //Add the moves to self.moves, and if attacking move, add the taken piece to taken.
+        //Add castle and promotion to movetype (they are all mutually exclusive).
+        //If castle, restore or take away castling right for whose turn it is.
     }
 
-    fn unmake(&self, m: &Move) {
-        todo!()
+    ///Unmakes the last move (the one at the end of the moves vec)
+    fn unmake(&mut self) {
+        //println!("unmake start");
+        self.turn = self.turn.opposite();
+        if let Some(m) = self.moves.pop() {
+            //to and from are from the perspective of the original move.
+            if let Square::Full(moving_piece) = self.board.at(m.to.rank, m.to.file) {
+                self.board.set(m.to.rank, m.to.file, Square::Empty);
+                self.board
+                    .set(m.from.rank, m.from.file, Square::Full(moving_piece));
+                match m.move_type {
+                    MoveType::Default => (),
+
+                    MoveType::Attack => {
+                        if let Some(taken_piece) = self.taken.pop() {
+                            self.board
+                                .set(m.to.rank, m.to.file, Square::Full(taken_piece));
+                        } else {
+                            panic!("Trying to unmake attacking move but no piece taken");
+                        }
+                    }
+                    MoveType::DefaultOrAttack => {
+                        if let Some(taken_piece) = self.taken.pop() {
+                            self.board
+                                .set(m.to.rank, m.to.file, Square::Full(taken_piece));
+                        }
+                        //Here we don't care about the case where "taken" is empty because
+                        //in that case it's just a default move (hopefully).
+                    }
+                }
+            } else {
+                self.draw();
+                panic!("No piece at destination in unmake");
+            }
+        } else {
+            panic!("Trying to unmake but there is no previous move");
+        }
+        //println!("unmake end");
         //Revert the above by popping from the stack
     }
 }
@@ -181,11 +261,16 @@ struct UniquePiece {
 }
 
 ///If move_type==Attack, muss target auf stack gepusht/gepoppt werden!
-#[derive(PartialEq)]
+#[derive(PartialEq, Copy, Clone)]
 pub struct Move {
     from: Field,
     to: Field,
     move_type: MoveType,
+    //Todo! Movetype entfernen? das weiss der move selbst noch nicht, muss immer berechnet
+    //werden. aber wie castle speichern? Für movegen vielleicht capture only mode behalten,
+    //ansonsten brauch ich die eigentlich für nichts.
+
+    //nur allmoves und captures.
 }
 
 impl Move {
@@ -195,6 +280,12 @@ impl Move {
             to,
             move_type,
         }
+    }
+}
+
+impl Display for Move {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}{}", self.from, self.to)
     }
 }
 
@@ -276,32 +367,6 @@ impl Board {
             file += 1;
         }
         Board { board }
-    }
-
-    ///Check for piece move legality (attack or default) & obstruction.
-    /// Does not yet check for checks or pins.
-    fn move_piece(
-        &mut self,
-        from_rank: i8,
-        from_file: i8,
-        to_rank: i8,
-        to_file: i8,
-    ) -> Result<(), Error> {
-        let square = match self.at(from_rank, from_file) {
-            Square::Full(p) => Square::Full(p),
-            _ => return Err(Error::NoPieceOnField(Field::new(from_rank, from_file))),
-        };
-
-        if !self
-            .pseudo_legal_move_fields(from_rank, from_file, MoveType::DefaultOrAttack)?
-            .contains(&Field::new(to_rank, to_file))
-        {
-            return Err(Error::BadMoveTarget(Field::new(to_rank, to_file)));
-        }
-
-        self.set(from_rank, from_file, Square::Empty);
-        self.set(to_rank, to_file, square);
-        Ok(())
     }
 
     pub fn pseudo_legal_moves(
@@ -1032,7 +1097,7 @@ pub enum Square {
     Padding,
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 pub enum MoveType {
     Default,
     Attack,
@@ -1068,7 +1133,7 @@ enum BreakLoop {
     False,
 }
 
-#[derive(PartialEq, Eq, PartialOrd, Ord, Debug)]
+#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Copy, Clone)]
 pub struct Field {
     rank: i8,
     file: i8,
