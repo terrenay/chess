@@ -2,7 +2,7 @@ use std::cmp;
 
 use crate::*;
 //All piece tables are from white's perspective.
-//The give an offset (in centipawns) from the piece's base value.
+//They give an offset (in centipawns) from the piece's base value.
 
 //From: https://www.chessprogramming.org/PeSTO%27s_Evaluation_Function
 
@@ -179,8 +179,8 @@ fn mg_value(kind: PieceKind) -> i32 {
         PieceKind::Bishop => 365,
         PieceKind::Rook => 477,
         PieceKind::Queen => 1025,
-        PieceKind::King => 0,
-    }
+        PieceKind::King => 20_000,
+    } //todo: king wieder auf 0 setzen!
 }
 
 fn eg_value(kind: PieceKind) -> i32 {
@@ -190,7 +190,7 @@ fn eg_value(kind: PieceKind) -> i32 {
         PieceKind::Bishop => 297,
         PieceKind::Rook => 512,
         PieceKind::Queen => 936,
-        PieceKind::King => 0,
+        PieceKind::King => 20_000,
     }
 }
 

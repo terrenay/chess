@@ -23,20 +23,21 @@ fn main() {
     /*b.move_by_str("e7e5");
     b.move_by_str("g1f3");
     b.move_by_str("b8b6");*/
-    println!("{}", b.min_max_helper(4));
-    unsafe {
-        println!("count: {}", COUNT);
-    }
+    //println!("best: {}", b.min_max(4));
 
-    /*loop {
-        print!("Next move: ");
+    //todo: king in eval wieder auf 0 setzen!
+    loop {
+        println!("-- ENTER NEXT MOVE --");
         let input: String = read!();
         b.move_by_str(input.as_str());
         b.draw();
-        b.min_max_helper(1);
+        println!("Please let me think :)");
+        let m = b.min_max(4);
+        b.make(m);
+        b.draw();
         /*println!("All valid moves in this position:");
         for m in b.generate_moves() {
             println!("{}", m);
         }*/
-    }*/
+    }
 }

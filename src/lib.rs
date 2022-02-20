@@ -6,7 +6,6 @@ use colored::Colorize;
 use ndarray::prelude::*;
 
 const STARTING_POSITION: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
-pub static mut COUNT: i32 = 0;
 
 //Todo: should start to think about organizing this mess into multiple files
 
@@ -52,33 +51,66 @@ impl BoardState {
     }
 
     pub fn evaluate(&self) -> i32 {
-        unsafe {
-            COUNT += 1;
-        }
         evaluation::evaluate(self)
+    }
+
+    ///Find the best move for the player whose turn it is by checking all possible moves
+    /// 'depth' plies into the future, always assuming the opponent answers with his own
+    /// best move.
+    pub fn min_max(&mut self, depth: i32) -> Move {
+        let mut best_move = Move::new(Field::new(-2, -2), Field::new(-2, -2), MoveType::Default);
+        let mut max_value = i32::MIN;
+        for m in self.generate_moves() {
+            self.make(m);
+            let score = -self.min_max_helper(depth - 1);
+            self.unmake();
+            if score > max_value {
+                best_move = m;
+                max_value = score;
+            }
+        }
+        best_move
     }
 
     ///For every legal move in the current position, this function calls make,
     /// then calls itself recursively, and finally calls unmake.
     ///
     /// Depth is how many recursive calls it should do.
-    pub fn min_max_helper(&mut self, depth: i32) -> i32 {
+    ///
+    /// We assume the opponent always plays the best move (just like us). That's why
+    /// we can just use the same function for both cases.
+    ///
+    ///Returns the evaluation of the board after playing the best legal move for the
+    /// player whose turn it currently is.
+    fn min_max_helper(&mut self, depth: i32) -> i32 {
         if depth == 0 {
             self.evaluate()
         } else {
-            let mut max = -i32::MAX;
+            let mut max = i32::MIN;
             for m in self.generate_moves() {
-                self.make(m); //Assume the move is legal. This must be ensured by genmoves.
-                              //println!("AFTER MAKE {}", m);
+                self.make(m);
 
-                //self.draw();
+                /*
+                It's now the opponent's turn. Since we assume he plays *his* strongest
+                move (worst case), we use whatever this function returns right now.
+                We negate it because this function returns evaluations relative to the
+                player whose turn it currently is. At the time of this recursive call,
+                it's the opponent's turn, but in the main body of this function
+                we want to know the score relativ to the player whose turn it is
+                at the beginning.
+                */
                 let score = -self.min_max_helper(depth - 1);
+
                 self.unmake();
+
+                //It is now the original player's turn again.
+
+                //We want to maximize the evaluation of the board after the next 'depth'
+                //moves from our own perspective.
                 if score > max {
                     max = score;
                 }
             }
-            //println!("Max was: {}", max);
             max
         }
     }
@@ -173,7 +205,7 @@ impl BoardState {
     }
 
     ///Assumes the move is legal!
-    fn make(&mut self, m: Move) {
+    pub fn make(&mut self, m: Move) {
         //println!("make start {}", m);
         self.moves.push(m);
         if let Square::Full(moving_piece) = self.board.at(m.from.rank, m.from.file) {
@@ -205,12 +237,15 @@ impl BoardState {
     fn unmake(&mut self) {
         //println!("unmake start");
         self.turn = self.turn.opposite();
+
         if let Some(m) = self.moves.pop() {
             //to and from are from the perspective of the original move.
+
             if let Square::Full(moving_piece) = self.board.at(m.to.rank, m.to.file) {
                 self.board.set(m.to.rank, m.to.file, Square::Empty);
                 self.board
                     .set(m.from.rank, m.from.file, Square::Full(moving_piece));
+
                 match m.move_type {
                     MoveType::Default => (),
 
@@ -240,14 +275,6 @@ impl Default for BoardState {
     fn default() -> Self {
         Self::new()
     }
-}
-
-///Every piece on the board corresponds to one instance of UniquePiece.
-/// The instances stay the same over several moves, only their positions change.
-/// This is used in the make() and unmake() functions of BoardState.
-struct UniquePiece {
-    piece: Piece,
-    field: Field,
 }
 
 ///If move_type==Attack, muss target auf stack gepusht/gepoppt werden!
@@ -513,7 +540,7 @@ impl Board {
         let v = vec![
             Field::new(rank + 1, file - 1),
             Field::new(rank + 1, file),
-            Field::new(rank + 1, file + 2),
+            Field::new(rank + 1, file + 1),
             Field::new(rank, file + 1),
             Field::new(rank - 1, file + 1),
             Field::new(rank - 1, file),
