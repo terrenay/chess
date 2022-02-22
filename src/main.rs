@@ -1,6 +1,8 @@
 #![allow(unused)]
 use chess::*;
+use colored::Colorize;
 use text_io::read;
+
 fn main() {
     let mut b = BoardState::new();
     b.draw();
@@ -26,18 +28,26 @@ fn main() {
     //println!("best: {}", b.min_max(4));
 
     //todo: king in eval wieder auf 0 setzen!
+    let mut count = 0;
     loop {
-        println!("-- ENTER NEXT MOVE --");
-        let input: String = read!();
-        b.move_by_str(input.as_str());
+        count += 1;
+        if count > 30 {
+            break;
+        }
+        //println!("-- ENTER NEXT MOVE --");
+        //let input: String = read!();
+        //match b.move_by_str(input.as_str()) {
+        //Ok(()) => {
+        println!("Please let me think :)");
+        let m = b.min_max(5);
+        b.make(m);
         b.draw();
         println!("Please let me think :)");
         let m = b.min_max(4);
         b.make(m);
         b.draw();
-        /*println!("All valid moves in this position:");
-        for m in b.generate_moves() {
-            println!("{}", m);
-        }*/
+        // }
+        //  Err(e) => eprintln!("{}", e.to_string().red()),
+        //}
     }
 }

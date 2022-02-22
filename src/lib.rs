@@ -21,6 +21,11 @@ const STARTING_POSITION: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w K
 //5: doubled pawns, bishop pair miteinfliessen lassen
 //Todo: kopien von board durch referenzen ersetzen
 
+//next up: multithreading: neuer thread für jeden der ersten moves einer position (als erste idee)
+//wichtigstes feature: pawn promotion
+//danach castling
+//(und previous moves wieder zeichnen!)
+
 ///Currently the idea is to have a single instance of BoardState that is then modified.
 /// The other option would be to clone it each ply, but that seems like a waste of
 /// resources.
@@ -117,7 +122,7 @@ impl BoardState {
 
     ///Move piece by string like "e2e4". Checks for pseudo-legality.
     #[allow(clippy::needless_return)]
-    pub fn move_by_str(&mut self, arg: &str) {
+    pub fn move_by_str(&mut self, arg: &str) -> Result<(), Error> {
         println!("\nTry to process input: {}", arg);
 
         let mut chars = arg.chars();
@@ -128,16 +133,10 @@ impl BoardState {
         if let Square::Full(p) = self.board.at(from_rank, from_file) {
             if p.color != self.turn {
                 eprintln!("{} to move!", self.turn.to_string().red());
-                return;
+                return Err(Error::WrongColor(Field::new(from_rank, from_file)));
             }
         } else {
-            eprintln!(
-                "{}",
-                Error::NoPieceOnField(Field::new(from_rank, from_file))
-                    .to_string()
-                    .red()
-            );
-            return;
+            return Err(Error::NoPieceOnField(Field::new(from_rank, from_file)));
         }
 
         //From here on we can be sure that it's the correct side to move and the square is
@@ -157,14 +156,10 @@ impl BoardState {
             .find(|m| m.from == from && m.to == to);
 
         if let Some(m) = v {
-            self.make(Move::new(from, to, m.move_type))
+            self.make(m);
+            Ok(())
         } else {
-            eprintln!(
-                "{}",
-                Error::BadMoveTarget(Field::new(to_rank, to_file))
-                    .to_string()
-                    .red()
-            );
+            return Err(Error::BadMoveTarget(Field::new(to_rank, to_file)));
         }
     }
 
@@ -223,8 +218,13 @@ impl BoardState {
             }
 
             self.board.set(m.from.rank, m.from.file, Square::Empty);
-            self.board
-                .set(m.to.rank, m.to.file, Square::Full(moving_piece));
+
+            //Promote if it is a promotion move, otherwise move the original piece
+            self.board.set(
+                m.to.rank,
+                m.to.file,
+                Square::Full(m.promotion.unwrap_or(moving_piece)),
+            );
         }
         self.turn = self.turn.opposite();
         //println!("make end {}", m);
@@ -243,8 +243,18 @@ impl BoardState {
 
             if let Square::Full(moving_piece) = self.board.at(m.to.rank, m.to.file) {
                 self.board.set(m.to.rank, m.to.file, Square::Empty);
-                self.board
-                    .set(m.from.rank, m.from.file, Square::Full(moving_piece));
+
+                //If it is a promoting move, the piece must have been a pawn before!
+                if m.promotion.is_some() {
+                    self.board.set(
+                        m.from.rank,
+                        m.from.file,
+                        Square::Full(Piece::pawn(self.turn)),
+                    );
+                } else {
+                    self.board
+                        .set(m.from.rank, m.from.file, Square::Full(moving_piece));
+                }
 
                 match m.move_type {
                     MoveType::Default => (),
@@ -278,16 +288,12 @@ impl Default for BoardState {
 }
 
 ///If move_type==Attack, muss target auf stack gepusht/gepoppt werden!
-#[derive(PartialEq, Copy, Clone)]
+#[derive(Copy, Clone)]
 pub struct Move {
     from: Field,
     to: Field,
     move_type: MoveType,
-    //Todo! Movetype entfernen? das weiss der move selbst noch nicht, muss immer berechnet
-    //werden. aber wie castle speichern? Für movegen vielleicht capture only mode behalten,
-    //ansonsten brauch ich die eigentlich für nichts.
-
-    //nur allmoves und captures.
+    promotion: Option<Piece>,
 }
 
 impl Move {
@@ -296,6 +302,18 @@ impl Move {
             from,
             to,
             move_type,
+            promotion: None,
+        }
+    }
+
+    ///Generate a new promotion move.
+    /// To use only for pawns!
+    fn promotion(from: Field, to: Field, move_type: MoveType, p: Piece) -> Self {
+        Move {
+            from,
+            to,
+            move_type,
+            promotion: Some(p),
         }
     }
 }
@@ -419,12 +437,25 @@ impl Board {
             PieceColor::Black => {
                 let mut v = match self.at(rank - 1, file) {
                     Square::Empty => {
-                        let mut v = vec![Move::new(
-                            from,
-                            Field::new(rank - 1, file),
-                            MoveType::Default,
-                        )];
+                        let mut v = vec![];
+                        if rank == 2 {
+                            v.push(Move::promotion(
+                                from,
+                                Field::new(rank - 1, file),
+                                MoveType::Default,
+                                Piece::queen(PieceColor::Black),
+                            ));
+                        } else {
+                            //Exclusive else because you may not push a pawn to the last
+                            //rank without promoting it.
+                            v.push(Move::new(
+                                from,
+                                Field::new(rank - 1, file),
+                                MoveType::Default,
+                            ));
+                        }
 
+                        //Can never be a promotion move
                         if rank == 7 {
                             //Double push
                             if let Square::Empty = self.at(rank - 2, file) {
@@ -440,13 +471,23 @@ impl Board {
                     _ => vec![],
                 };
                 //Black pawn attacks down to the left
+                //Remember this could also be a promotion move.
                 match self.at(rank - 1, file - 1) {
                     Square::Full(p) if matches!(p.color, PieceColor::White) => {
-                        v.push(Move::new(
-                            from,
-                            Field::new(rank - 1, file - 1),
-                            MoveType::Capture,
-                        ));
+                        if rank == 2 {
+                            v.push(Move::promotion(
+                                from,
+                                Field::new(rank - 1, file - 1),
+                                MoveType::Capture,
+                                Piece::queen(PieceColor::Black),
+                            ));
+                        } else {
+                            v.push(Move::new(
+                                from,
+                                Field::new(rank - 1, file - 1),
+                                MoveType::Capture,
+                            ));
+                        }
                     }
                     _ => (),
                 }
@@ -455,11 +496,20 @@ impl Board {
                 match self.at(rank - 1, file + 1) {
                     //Right attack
                     Square::Full(p) if matches!(p.color, PieceColor::White) => {
-                        v.push(Move::new(
-                            from,
-                            Field::new(rank - 1, file + 1),
-                            MoveType::Capture,
-                        ));
+                        if rank == 2 {
+                            v.push(Move::promotion(
+                                from,
+                                Field::new(rank - 1, file + 1),
+                                MoveType::Capture,
+                                Piece::queen(PieceColor::Black),
+                            ));
+                        } else {
+                            v.push(Move::new(
+                                from,
+                                Field::new(rank - 1, file + 1),
+                                MoveType::Capture,
+                            ));
+                        }
                     }
                     _ => (),
                 }
@@ -468,11 +518,21 @@ impl Board {
             PieceColor::White => {
                 let mut v = match self.at(rank + 1, file) {
                     Square::Empty => {
-                        let mut v = vec![Move::new(
-                            from,
-                            Field::new(rank + 1, file),
-                            MoveType::Default,
-                        )];
+                        let mut v = vec![];
+                        if rank == 7 {
+                            v.push(Move::promotion(
+                                from,
+                                Field::new(rank + 1, file),
+                                MoveType::Default,
+                                Piece::queen(PieceColor::White),
+                            ));
+                        } else {
+                            v.push(Move::new(
+                                from,
+                                Field::new(rank + 1, file),
+                                MoveType::Default,
+                            ));
+                        }
 
                         if rank == 2 {
                             //Double push
@@ -492,11 +552,20 @@ impl Board {
                 //White pawn attacks up to the left
                 match self.at(rank + 1, file - 1) {
                     Square::Full(p) if matches!(p.color, PieceColor::Black) => {
-                        v.push(Move::new(
-                            from,
-                            Field::new(rank + 1, file - 1),
-                            MoveType::Capture,
-                        ));
+                        if rank == 7 {
+                            v.push(Move::promotion(
+                                from,
+                                Field::new(rank + 1, file - 1),
+                                MoveType::Capture,
+                                Piece::queen(PieceColor::White),
+                            ));
+                        } else {
+                            v.push(Move::new(
+                                from,
+                                Field::new(rank + 1, file - 1),
+                                MoveType::Capture,
+                            ));
+                        }
                     }
                     _ => (),
                 }
@@ -504,11 +573,20 @@ impl Board {
                 //White pawn attacks up to the right
                 match self.at(rank + 1, file + 1) {
                     Square::Full(p) if matches!(p.color, PieceColor::Black) => {
-                        v.push(Move::new(
-                            from,
-                            Field::new(rank + 1, file + 1),
-                            MoveType::Capture,
-                        ));
+                        if rank == 7 {
+                            v.push(Move::promotion(
+                                from,
+                                Field::new(rank + 1, file + 1),
+                                MoveType::Capture,
+                                Piece::queen(PieceColor::White),
+                            ));
+                        } else {
+                            v.push(Move::new(
+                                from,
+                                Field::new(rank + 1, file + 1),
+                                MoveType::Capture,
+                            ));
+                        }
                     }
                     _ => (),
                 }
@@ -982,7 +1060,6 @@ pub enum MoveType {
     Default,
     Capture,
     Castle,
-    Promotion,
 }
 
 impl Square {
@@ -1065,6 +1142,8 @@ impl Display for PieceColor {
 pub enum Error {
     #[error("square on {0} is empty or padding")]
     NoPieceOnField(Field),
+    #[error("piece on {0} has wrong color")]
+    WrongColor(Field),
     #[error("cannot move to {0}")]
     BadMoveTarget(Field),
 }
