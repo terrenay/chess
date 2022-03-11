@@ -26,6 +26,39 @@ const STARTING_POSITION: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w K
 //danach castling
 //(und previous moves wieder zeichnen!)
 
+//---> todo: white_king position updaten wenn der könig sich bewegt!!! Momentan
+//bleibt er für das programm immer stehen
+
+/*struct AttackMap {
+    map: Array2<bool>,
+}
+
+impl AttackMap {
+    /// <b>Precondition: -1 <= rank, file <= 10
+    fn at(&self, rank: i8, file: i8) -> bool {
+        let (i, j) = Self::to_board(rank, file);
+        self.map[[i, j]]
+    }
+
+    /// <b>Precondition: -1 <= rank, file <= 10
+    fn set(&mut self, rank: i8, file: i8, val: bool) {
+        let (i, j) = Self::to_board(rank, file);
+        self.map[[i, j]] = val;
+    }
+
+    fn new() -> Self {
+        AttackMap {
+            map: Array2::<bool>::default((8, 8)),
+        }
+    }
+
+    ///Not valid for padding squares, since these don't matter for check checks!
+    fn to_board(rank: i8, file: i8) -> (usize, usize) {
+        debug_assert!(rank >= 1 && rank <= 8 && file >= 1 && file <= 8);
+        (9 - rank as usize, file as usize)
+    }
+}*/
+
 ///Currently the idea is to have a single instance of BoardState that is then modified.
 /// The other option would be to clone it each ply, but that seems like a waste of
 /// resources.
@@ -37,21 +70,30 @@ pub struct BoardState {
     turn: PieceColor,
     white_castling_rights: bool,
     black_castling_rights: bool,
+    white_king: Field,
+    black_king: Field,
     en_passant: Option<Field>,
     moves: Vec<Move>,
     taken: Vec<Piece>,
+    //white_attack_map: AttackMap, //vlt array2<vec<uniquepiece>> schlussendlich
 }
 
 impl BoardState {
     pub fn new() -> Self {
+        let board = Board::new();
+        let (white_king, black_king) = board.king_positions();
+
         Self {
             board: Board::new(),
             turn: PieceColor::White,
             white_castling_rights: true,
             black_castling_rights: true,
+            white_king,
+            black_king,
             en_passant: None,
             moves: vec![],
             taken: vec![],
+            //white_attack_map: AttackMap::new(),
         }
     }
 
@@ -67,12 +109,18 @@ impl BoardState {
         let mut max_value = i32::MIN;
         for m in self.generate_moves() {
             self.make(m);
-            let score = -self.min_max_helper(depth - 1);
+            let mut score = i32::MIN;
+            if !self.check(self.turn.opposite()) {
+                score = -self.min_max_helper(depth - 1);
+            }
             self.unmake();
             if score > max_value {
                 best_move = m;
                 max_value = score;
             }
+        }
+        if max_value == i32::MIN {
+            panic!("checkmate! (or stalemate)");
         }
         best_move
     }
@@ -104,7 +152,11 @@ impl BoardState {
                 we want to know the score relativ to the player whose turn it is
                 at the beginning.
                 */
-                let score = -self.min_max_helper(depth - 1);
+                let mut score = i32::MIN;
+
+                if !self.check(self.turn.opposite()) {
+                    score = -self.min_max_helper(depth - 1);
+                }
 
                 self.unmake();
 
@@ -156,15 +208,15 @@ impl BoardState {
             .find(|m| m.from == from && m.to == to);
 
         if let Some(m) = v {
-            self.make(m);
+            self.make(m); //if check, call unmake after this
             Ok(())
         } else {
             return Err(Error::BadMoveTarget(Field::new(to_rank, to_file)));
         }
     }
 
-    pub fn draw(&self) {
-        self.board.draw();
+    pub fn draw(&self, show_last: bool) {
+        self.draw_board(show_last);
         self.print_state_info();
     }
 
@@ -202,6 +254,13 @@ impl BoardState {
     ///Assumes the move is legal!
     pub fn make(&mut self, m: Move) {
         //println!("make start {}", m);
+        /*
+        todo!(
+            "attack map benutzen. mit zahlen statt bool, damit mehrere pieces
+        angreifen können. bei make um 1 erhöhen, unmake verringern (clamp).
+        pseudo legal moves nicht doppelt berechnen!"
+        );*/
+
         self.moves.push(m);
         if let Square::Full(moving_piece) = self.board.at(m.from.rank, m.from.file) {
             match m.move_type {
@@ -270,7 +329,7 @@ impl BoardState {
                     _ => todo!(),
                 }
             } else {
-                self.draw();
+                self.draw(true);
                 panic!("No piece at destination in unmake");
             }
         } else {
@@ -278,6 +337,108 @@ impl BoardState {
         }
         //println!("unmake end");
         //Revert the above by popping from the stack
+    }
+
+    fn threatened(&self, victim_color: PieceColor, field: Field) -> bool {
+        //Kinght Moves
+
+        for m in self.board.pseudo_legal_knight_moves(victim_color, field) {
+            let Field { rank, file } = m.to;
+            if let Square::Full(p) = self.board.at(rank, file) {
+                if matches!(p.kind, PieceKind::Knight) {
+                    return true;
+                }
+            }
+        }
+
+        //Rooks/Queens
+
+        for m in self.board.pseudo_legal_rook_moves(victim_color, field) {
+            let Field { rank, file } = m.to;
+            if let Square::Full(p) = self.board.at(rank, file) {
+                if matches!(p.kind, PieceKind::Rook) || matches!(p.kind, PieceKind::Queen) {
+                    return true;
+                }
+            }
+        }
+
+        //Bishops/Queens
+
+        for m in self.board.pseudo_legal_bishop_moves(victim_color, field) {
+            let Field { rank, file } = m.to;
+            if let Square::Full(p) = self.board.at(rank, file) {
+                if matches!(p.kind, PieceKind::Bishop) || matches!(p.kind, PieceKind::Queen) {
+                    return true;
+                }
+            }
+        }
+
+        //Pawns
+
+        for m in self.board.pseudo_legal_pawn_moves(victim_color, field) {
+            let Field { rank, file } = m.to;
+            if let Square::Full(p) = self.board.at(rank, file) {
+                if matches!(p.kind, PieceKind::Bishop) || matches!(p.kind, PieceKind::Queen) {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+
+    ///Returns whether color is in check
+    pub fn check(&self, color: PieceColor) -> bool {
+        match color {
+            PieceColor::White => self.threatened(color, self.white_king),
+            PieceColor::Black => self.threatened(color, self.black_king),
+        }
+    }
+
+    ///Draw chess board using unicode characters.
+    /// todo: could draw pseudolegal moves for a specific piece (maybe in
+    /// another function)
+    pub fn draw_board(&self, show_prev: bool) {
+        for rank in (1..9).rev() {
+            print!("{}", rank);
+            for file in 1..9 {
+                let square = self.board.at(rank, file);
+                let field = Field::new(rank, file);
+                let tile = match square.unicode_str() {
+                    Some(s) => s,
+                    None => continue,
+                };
+
+                let mut tile = if (rank + file) % 2 == 0 {
+                    tile.on_truecolor(158, 93, 30) //black
+                } else {
+                    tile.on_truecolor(155, 120, 70) //white
+                };
+
+                if show_prev {
+                    if let Some(&last) = self.moves.last() {
+                        if last.from == field || last.to == field {
+                            tile = tile.on_truecolor(122, 156, 70)
+                        }
+                    }
+                }
+
+                let tile = match square.color() {
+                    Some(color) => match color {
+                        PieceColor::Black => tile.black(),
+                        PieceColor::White => tile.white(),
+                    },
+                    None => tile,
+                };
+
+                print!("{}", tile);
+            }
+            println!();
+        }
+        for i in 1..=8 {
+            print!(" {}", Board::number_to_file_letter(i));
+        }
+        println!();
     }
 }
 
@@ -780,6 +941,26 @@ impl Board {
         default_moves
     }
 
+    ///White, Black
+    fn king_positions(&self) -> (Field, Field) {
+        let mut white_king = Field::new(0, 0);
+        let mut black_king = Field::new(0, 0);
+        for rank in 1..=8 {
+            for file in 1..=8 {
+                if let Square::Full(p) = self.at(rank, file) {
+                    if matches!(p.kind, PieceKind::King) {
+                        if p.color == PieceColor::White {
+                            white_king = Field::new(rank, file);
+                        } else {
+                            black_king = Field::new(rank, file);
+                        }
+                    }
+                }
+            }
+        }
+        (white_king, black_king)
+    }
+
     ///Example: Converts a to 1.
     fn file_letter_to_number(file: char) -> usize {
         match file {
@@ -823,42 +1004,6 @@ impl Board {
         ((10 - rank) as usize, (file + 1) as usize)
     }
 
-    ///Draw chess board using unicode characters.
-    /// todo: could draw pseudolegal moves for a specific piece (maybe in
-    /// another function)
-    pub fn draw(&self) {
-        for rank in (1..9).rev() {
-            print!("{}", rank);
-            for file in 1..9 {
-                let square = self.at(rank, file);
-                let tile = match square.unicode_str() {
-                    Some(s) => s,
-                    None => continue,
-                };
-
-                let tile = if (rank + file) % 2 == 0 {
-                    tile.on_truecolor(158, 93, 30) //black
-                } else {
-                    tile.on_truecolor(155, 120, 70) //white
-                };
-
-                let tile = match square.color() {
-                    Some(color) => match color {
-                        PieceColor::Black => tile.black(),
-                        PieceColor::White => tile.white(),
-                    },
-                    None => tile,
-                };
-
-                print!("{}", tile);
-            }
-            println!();
-        }
-        for i in 1..=8 {
-            print!(" {}", Board::number_to_file_letter(i));
-        }
-        println!();
-    }
     /*
     pub fn draw_pseudo_legal_moves(&self, pos_rank: i8, pos_file: i8) {
         let v = self.pseudo_legal_moves(pos_rank, pos_file).unwrap();
@@ -1115,7 +1260,7 @@ impl Display for Field {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-enum PieceColor {
+pub enum PieceColor {
     Black,
     White,
 }
