@@ -68,11 +68,14 @@ impl AttackMap {
 pub struct BoardState {
     pub board: Board,
     turn: PieceColor,
-    white_castling_rights: bool,
-    black_castling_rights: bool,
+    ply: u16,
+    white_queen_castle_lost_ply: Option<u16>,
+    black_queen_castle_lost_ply: Option<u16>,
+    white_king_castle_lost_ply: Option<u16>,
+    black_king_castle_lost_ply: Option<u16>,
     white_king: Field,
     black_king: Field,
-    en_passant: Option<Field>,
+    //en_passant: Option<Field>,
     moves: Vec<Move>,
     taken: Vec<Piece>,
     //white_attack_map: AttackMap, //vlt array2<vec<uniquepiece>> schlussendlich
@@ -86,11 +89,14 @@ impl BoardState {
         Self {
             board: Board::new(),
             turn: PieceColor::White,
-            white_castling_rights: true,
-            black_castling_rights: true,
+            ply: 1,
+            white_queen_castle_lost_ply: None,
+            black_queen_castle_lost_ply: None,
+            white_king_castle_lost_ply: None,
+            black_king_castle_lost_ply: None,
             white_king,
             black_king,
-            en_passant: None,
+            //en_passant: None,
             moves: vec![],
             taken: vec![],
             //white_attack_map: AttackMap::new(),
@@ -104,6 +110,9 @@ impl BoardState {
     ///Find the best move for the player whose turn it is by checking all possible moves
     /// 'depth' plies into the future, always assuming the opponent answers with his own
     /// best move.
+    ///
+    /// TODO: checkmate is not a valid option! should give infinite score, so that
+    /// this variant is always taken!
     pub fn min_max(&mut self, depth: i32) -> Move {
         let mut best_move = Move::new(Field::new(-2, -2), Field::new(-2, -2), MoveType::Default);
         let mut max_value = i32::MIN;
@@ -200,15 +209,27 @@ impl BoardState {
         let from = Field::new(from_rank, from_file);
         let to = Field::new(to_rank, to_file);
 
-        let v = self
+        let mut v = self
             .board
             .pseudo_legal_moves(from)
             .unwrap()
             .into_iter()
             .find(|m| m.from == from && m.to == to);
 
+        if v.is_none() {
+            v = self
+                .castling_moves()
+                .into_iter()
+                .find(|m| m.from == from && m.to == to);
+        }
+
         if let Some(m) = v {
-            self.make(m); //if check, call unmake after this
+            self.make(m);
+            if self.check(self.turn.opposite()) {
+                println!("You're in check!");
+                self.unmake();
+                return Err(Error::BadMoveTarget(Field::new(to_rank, to_file)));
+            }
             Ok(())
         } else {
             return Err(Error::BadMoveTarget(Field::new(to_rank, to_file)));
@@ -222,9 +243,24 @@ impl BoardState {
 
     fn print_state_info(&self) {
         println!("Turn: {:?}", self.turn);
-        println!("White castling right: {:?}", self.white_castling_rights);
-        println!("Black castling right: {:?}", self.black_castling_rights);
-        println!("En passant square: {:?}", self.en_passant);
+        println!("Ply: {:?}", self.ply);
+        println!(
+            "White king: {:?}",
+            self.white_king_castle_lost_ply.unwrap_or(0)
+        );
+        println!(
+            "White queen: {:?}",
+            self.white_queen_castle_lost_ply.unwrap_or(0)
+        );
+        println!(
+            "Black king: {:?}",
+            self.black_king_castle_lost_ply.unwrap_or(0)
+        );
+        println!(
+            "Black queen: {:?}",
+            self.black_queen_castle_lost_ply.unwrap_or(0)
+        );
+        //println!("En passant square: {:?}", self.en_passant);
         println!("EVALUATION: {}", self.evaluate());
     }
 
@@ -234,7 +270,7 @@ impl BoardState {
 
         //Eventually I want to keep a list of currently alive pieces. Then only go through
         //those //todo!
-        let mut v: Vec<Move> = vec![];
+        let mut v: Vec<Move> = self.castling_moves();
         for rank in 1..=8 {
             for file in 1..=8 {
                 if let Square::Full(p) = self.board.at(rank, file) {
@@ -244,6 +280,7 @@ impl BoardState {
                                 .pseudo_legal_moves(Field::new(rank, file))
                                 .unwrap(),
                         );
+                        v.extend(self.castling_moves());
                     }
                 }
             }
@@ -251,16 +288,8 @@ impl BoardState {
         v
     }
 
-    ///Assumes the move is legal!
+    ///Assumes the move is fully legal!
     pub fn make(&mut self, m: Move) {
-        //println!("make start {}", m);
-        /*
-        todo!(
-            "attack map benutzen. mit zahlen statt bool, damit mehrere pieces
-        angreifen können. bei make um 1 erhöhen, unmake verringern (clamp).
-        pseudo legal moves nicht doppelt berechnen!"
-        );*/
-
         self.moves.push(m);
         if let Square::Full(moving_piece) = self.board.at(m.from.rank, m.from.file) {
             match m.move_type {
@@ -273,8 +302,70 @@ impl BoardState {
                         panic!("MoveType attack but empty target");
                     }
                 }
-                _ => todo!(),
+                MoveType::CastleKingside => {
+                    //King's position is updated below (independent of whether it's castling
+                    //or a normal move.)
+                    if self.turn == PieceColor::White {
+                        let rook = self.board.at(1, 8);
+                        self.board.set(1, 8, Square::Empty);
+                        self.board.set(1, 6, rook);
+                    } else {
+                        let rook = self.board.at(8, 8);
+                        self.board.set(8, 8, Square::Empty);
+                        self.board.set(8, 6, rook);
+                    }
+                }
+                MoveType::CastleQueenside => {
+                    if self.turn == PieceColor::White {
+                        let rook = self.board.at(1, 1);
+                        self.board.set(1, 1, Square::Empty);
+                        self.board.set(1, 4, rook);
+                    } else {
+                        let rook = self.board.at(8, 1);
+                        self.board.set(8, 1, Square::Empty);
+                        self.board.set(8, 4, rook);
+                    }
+                }
             }
+
+            //King moves must be handled specifically. Update the state variable.
+
+            //Since castling is a move from the king's position, moving_piece.kind==King,
+            //so both castling rights are removed and the king's position is updated.
+
+            match moving_piece.kind {
+                PieceKind::King => {
+                    if moving_piece.color == PieceColor::White {
+                        self.white_king = Field::new(m.to.rank, m.to.file);
+                        self.white_king_castle_lost_ply.get_or_insert(self.ply);
+                        self.white_queen_castle_lost_ply.get_or_insert(self.ply);
+                    } else {
+                        self.black_king = Field::new(m.to.rank, m.to.file);
+                        self.black_king_castle_lost_ply.get_or_insert(self.ply);
+                        self.black_queen_castle_lost_ply.get_or_insert(self.ply);
+                    }
+                }
+                PieceKind::Rook => {
+                    //We can skip checking the color because the move is assumed to be
+                    //legal, so if it is from a1, it must be white's move.
+                    if m.from == Field::new(1, 1) {
+                        //white queen-side
+                        self.white_queen_castle_lost_ply.get_or_insert(self.ply);
+                    } else if m.from == Field::new(1, 8) {
+                        //white king-side
+                        self.white_king_castle_lost_ply.get_or_insert(self.ply);
+                    } else if m.from == Field::new(8, 1) {
+                        //black queen-side
+                        self.black_queen_castle_lost_ply.get_or_insert(self.ply);
+                    } else if m.from == Field::new(8, 8) {
+                        //black king-side
+                        self.black_king_castle_lost_ply.get_or_insert(self.ply);
+                    }
+                }
+                _ => (),
+            }
+
+            //The from square is now empty.
 
             self.board.set(m.from.rank, m.from.file, Square::Empty);
 
@@ -285,7 +376,9 @@ impl BoardState {
                 Square::Full(m.promotion.unwrap_or(moving_piece)),
             );
         }
+
         self.turn = self.turn.opposite();
+        self.ply += 1;
         //println!("make end {}", m);
         //Add the moves to self.moves, and if attacking move, add the taken piece to taken.
         //Add castle and promotion to movetype (they are all mutually exclusive).
@@ -296,6 +389,7 @@ impl BoardState {
     fn unmake(&mut self) {
         //println!("unmake start");
         self.turn = self.turn.opposite();
+        self.ply -= 1;
 
         if let Some(m) = self.moves.pop() {
             //to and from are from the perspective of the original move.
@@ -315,6 +409,8 @@ impl BoardState {
                         .set(m.from.rank, m.from.file, Square::Full(moving_piece));
                 }
 
+                //Handle captures and castling (update rook position)
+
                 match m.move_type {
                     MoveType::Default => (),
 
@@ -326,7 +422,60 @@ impl BoardState {
                             panic!("Trying to unmake attacking move but no piece taken");
                         }
                     }
-                    _ => todo!(),
+                    MoveType::CastleKingside => {
+                        if self.turn == PieceColor::White {
+                            let rook = self.board.at(1, 6);
+                            self.board.set(1, 6, Square::Empty);
+                            self.board.set(1, 8, rook);
+                        } else {
+                            let rook = self.board.at(8, 6);
+                            self.board.set(8, 6, Square::Empty);
+                            self.board.set(8, 8, rook);
+                        }
+                    }
+                    MoveType::CastleQueenside => {
+                        if self.turn == PieceColor::White {
+                            let rook = self.board.at(1, 4);
+                            self.board.set(1, 4, Square::Empty);
+                            self.board.set(1, 1, rook);
+                        } else {
+                            let rook = self.board.at(8, 4);
+                            self.board.set(8, 4, Square::Empty);
+                            self.board.set(8, 1, rook);
+                        }
+                    }
+                }
+
+                //Update king position
+
+                if matches!(moving_piece.kind, PieceKind::King) {
+                    if moving_piece.color == PieceColor::White {
+                        self.white_king = Field::new(m.from.rank, m.from.file);
+                    } else {
+                        self.black_king = Field::new(m.from.rank, m.from.file);
+                    }
+                }
+
+                //Restore the castling rights which apply
+                if let Some(castle_ply) = self.white_king_castle_lost_ply {
+                    if self.ply == castle_ply {
+                        self.white_king_castle_lost_ply = None;
+                    }
+                }
+                if let Some(castle_ply) = self.white_queen_castle_lost_ply {
+                    if self.ply == castle_ply {
+                        self.white_queen_castle_lost_ply = None;
+                    }
+                }
+                if let Some(castle_ply) = self.black_king_castle_lost_ply {
+                    if self.ply == castle_ply {
+                        self.black_king_castle_lost_ply = None;
+                    }
+                }
+                if let Some(castle_ply) = self.black_queen_castle_lost_ply {
+                    if self.ply == castle_ply {
+                        self.black_queen_castle_lost_ply = None;
+                    }
                 }
             } else {
                 self.draw(true);
@@ -378,7 +527,7 @@ impl BoardState {
         for m in self.board.pseudo_legal_pawn_moves(victim_color, field) {
             let Field { rank, file } = m.to;
             if let Square::Full(p) = self.board.at(rank, file) {
-                if matches!(p.kind, PieceKind::Bishop) || matches!(p.kind, PieceKind::Queen) {
+                if matches!(p.kind, PieceKind::Pawn) {
                     return true;
                 }
             }
@@ -393,6 +542,72 @@ impl BoardState {
             PieceColor::White => self.threatened(color, self.white_king),
             PieceColor::Black => self.threatened(color, self.black_king),
         }
+    }
+
+    ///Returns all valid castling moves of player whose turn it currently is.
+    fn castling_moves(&self) -> Vec<Move> {
+        let mut v = vec![];
+        //Check cheap conditions (empty, castling rights) first, then expensive (threatened)
+
+        if self.turn == PieceColor::White {
+            if self.white_king_castle_lost_ply.is_none()
+                && self.board.empty(1, 6)
+                && self.board.empty(1, 7)
+                && !self.check(self.turn)
+                && !self.threatened(self.turn, Field::new(1, 6))
+                && !self.threatened(self.turn, Field::new(1, 7))
+            {
+                v.push(Move::new(
+                    Field::new(1, 5),
+                    Field::new(1, 7),
+                    MoveType::CastleKingside,
+                ));
+            }
+            if self.white_queen_castle_lost_ply.is_none()
+                && self.board.empty(1, 4)
+                && self.board.empty(1, 3)
+                && self.board.empty(1, 2)
+                && !self.check(self.turn)
+                && !self.threatened(self.turn, Field::new(1, 4))
+                && !self.threatened(self.turn, Field::new(1, 3))
+            {
+                v.push(Move::new(
+                    Field::new(1, 5),
+                    Field::new(1, 3),
+                    MoveType::CastleQueenside,
+                ));
+            }
+        } else {
+            //Black's turn
+            if self.black_king_castle_lost_ply.is_none()
+                && self.board.empty(8, 6)
+                && self.board.empty(8, 7)
+                && !self.check(self.turn)
+                && !self.threatened(self.turn, Field::new(8, 6))
+                && !self.threatened(self.turn, Field::new(8, 7))
+            {
+                v.push(Move::new(
+                    Field::new(8, 5),
+                    Field::new(8, 7),
+                    MoveType::CastleKingside,
+                ));
+            }
+            if self.black_queen_castle_lost_ply.is_none()
+                && self.board.empty(8, 4)
+                && self.board.empty(8, 3)
+                && self.board.empty(8, 2)
+                && !self.check(self.turn)
+                && !self.threatened(self.turn, Field::new(8, 4))
+                && !self.threatened(self.turn, Field::new(8, 3))
+            {
+                v.push(Move::new(
+                    Field::new(8, 5),
+                    Field::new(8, 3),
+                    MoveType::CastleQueenside,
+                ));
+            }
+        }
+        v
     }
 
     ///Draw chess board using unicode characters.
@@ -448,7 +663,8 @@ impl Default for BoardState {
     }
 }
 
-///If move_type==Attack, muss target auf stack gepusht/gepoppt werden!
+///If move_type==Castle, from must contain the king's position!
+/// to is ignored.
 #[derive(Copy, Clone)]
 pub struct Move {
     from: Field,
@@ -510,7 +726,13 @@ impl Board {
         self.board[[i, j]] = val;
     }
 
+    fn empty(&self, rank: i8, file: i8) -> bool {
+        matches!(self.at(rank, file), Square::Empty)
+    }
+
     ///Only field 1 works at the moment (only position layout, with no further info)
+    ///
+    /// TODO: king position und castling rigts werden ignoriert!
     fn from_fen(fen: &str) -> Board {
         let mut board = Array2::<Square>::default((12, 12));
         let mut rank = 8;
@@ -771,9 +993,6 @@ impl Board {
         self.filter_free_or_opponent(from, v, color.opposite())
     }
 
-    ///This is quite scuffed at the moment since king moves are quite useless
-    /// without checking for checks...
-    /// todo: enemy checks
     fn pseudo_legal_king_moves(&self, color: PieceColor, from: Field) -> Vec<Move> {
         let Field { rank, file } = from;
         let v = vec![
@@ -1204,7 +1423,8 @@ pub enum Square {
 pub enum MoveType {
     Default,
     Capture,
-    Castle,
+    CastleKingside,
+    CastleQueenside,
 }
 
 impl Square {

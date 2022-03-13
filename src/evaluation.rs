@@ -179,8 +179,8 @@ fn mg_value(kind: PieceKind) -> i32 {
         PieceKind::Bishop => 365,
         PieceKind::Rook => 477,
         PieceKind::Queen => 1025,
-        PieceKind::King => 20_000,
-    } //todo: king wieder auf 0 setzen!
+        PieceKind::King => 0,
+    }
 }
 
 fn eg_value(kind: PieceKind) -> i32 {
@@ -190,7 +190,7 @@ fn eg_value(kind: PieceKind) -> i32 {
         PieceKind::Bishop => 297,
         PieceKind::Rook => 512,
         PieceKind::Queen => 936,
-        PieceKind::King => 20_000,
+        PieceKind::King => 0,
     }
 }
 
