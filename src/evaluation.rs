@@ -239,17 +239,27 @@ pub fn evaluate(state: &BoardState) -> i32 {
     }
 
     //We want a positive score to mean that the player whose turn it is has the advantage
-    let mg_score = if state.turn == PieceColor::White {
+    let mut mg_score = if state.turn == PieceColor::White {
         mg_white - mg_black
     } else {
         mg_black - mg_white
     };
 
-    let eg_score = if state.turn == PieceColor::White {
+    let mut eg_score = if state.turn == PieceColor::White {
         eg_white - eg_black
     } else {
         eg_black - eg_white
     };
+
+    //Encourage checkmate by giving a bonus for checking
+
+    //it can't be white's turn if black is in check (black would have had to remove
+    //the mate threat in the previous turn)
+
+    if state.check(state.turn) {
+        mg_score -= 100; //random choice of value
+        eg_score -= 200;
+    }
 
     //Problem: Promotion of several pawns makes the engine think we are in middle game again.
 

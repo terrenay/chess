@@ -131,6 +131,9 @@ impl BoardState {
         if max_value == i32::MIN {
             panic!("checkmate! (or stalemate)");
         }
+        if max_value == i32::MAX {
+            eprintln!("FOUND A CHECKMATE SEQUENCE? with {}", best_move);
+        }
         best_move
     }
 
@@ -163,6 +166,8 @@ impl BoardState {
                 */
                 let mut score = i32::MIN;
 
+                //If a move lands the current color in check, don't consider the move and
+                //variants resulting from it
                 if !self.check(self.turn.opposite()) {
                     score = -self.min_max_helper(depth - 1);
                 }
@@ -188,8 +193,12 @@ impl BoardState {
 
         let mut chars = arg.chars();
 
-        let from_file = Board::file_letter_to_number(chars.next().unwrap()) as i8;
-        let from_rank = chars.next().unwrap().to_digit(10).unwrap() as i8;
+        let from_file = Board::file_letter_to_number(chars.next().ok_or(Error::Parse)?)? as i8;
+        let from_rank = chars
+            .next()
+            .ok_or(Error::Parse)?
+            .to_digit(10)
+            .ok_or(Error::Parse)? as i8;
 
         if let Square::Full(p) = self.board.at(from_rank, from_file) {
             if p.color != self.turn {
@@ -203,8 +212,12 @@ impl BoardState {
         //From here on we can be sure that it's the correct side to move and the square is
         //actually full.
 
-        let to_file = Board::file_letter_to_number(chars.next().unwrap()) as i8;
-        let to_rank = chars.next().unwrap().to_digit(10).unwrap() as i8;
+        let to_file = Board::file_letter_to_number(chars.next().ok_or(Error::Parse)?)? as i8;
+        let to_rank = chars
+            .next()
+            .ok_or(Error::Parse)?
+            .to_digit(10)
+            .ok_or(Error::Parse)? as i8;
 
         let from = Field::new(from_rank, from_file);
         let to = Field::new(to_rank, to_file);
@@ -261,7 +274,12 @@ impl BoardState {
             self.black_queen_castle_lost_ply.unwrap_or(0)
         );
         //println!("En passant square: {:?}", self.en_passant);
-        println!("EVALUATION: {}", self.evaluate());
+
+        /*todo!(
+            "hier sollte ich minmax aufrufen, weil evaluate die position nur statisch
+        auswertet. ich will aber die moves der zukunft auch berücksichtigen."
+        );
+        println!("EVALUATION: {}", self.evaluate());*/
     }
 
     pub fn generate_moves(&self) -> Vec<Move> {
@@ -1181,17 +1199,17 @@ impl Board {
     }
 
     ///Example: Converts a to 1.
-    fn file_letter_to_number(file: char) -> usize {
+    fn file_letter_to_number(file: char) -> Result<usize, Error> {
         match file {
-            'a' => 1,
-            'b' => 2,
-            'c' => 3,
-            'd' => 4,
-            'e' => 5,
-            'f' => 6,
-            'g' => 7,
-            'h' => 8,
-            _ => panic!(),
+            'a' => Ok(1),
+            'b' => Ok(2),
+            'c' => Ok(3),
+            'd' => Ok(4),
+            'e' => Ok(5),
+            'f' => Ok(6),
+            'g' => Ok(7),
+            'h' => Ok(8),
+            _ => Err(Error::Parse),
         }
     }
 
@@ -1511,6 +1529,8 @@ pub enum Error {
     WrongColor(Field),
     #[error("cannot move to {0}")]
     BadMoveTarget(Field),
+    #[error("cannot parse symbol")]
+    Parse,
 }
 /*
 #[cfg(test)]
