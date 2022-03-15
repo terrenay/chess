@@ -207,6 +207,9 @@ fn gamephase_value(kind: PieceKind) -> i32 {
     }
 }
 
+///Positive: White has an advantage
+///
+/// Negative: Black has an advantage
 pub fn evaluate(state: &BoardState) -> i32 {
     let board = &state.board;
     let mut mg_white = 0;
@@ -238,28 +241,14 @@ pub fn evaluate(state: &BoardState) -> i32 {
         }
     }
 
-    //We want a positive score to mean that the player whose turn it is has the advantage
-    let mut mg_score = if state.turn == PieceColor::White {
-        mg_white - mg_black
-    } else {
-        mg_black - mg_white
-    };
+    let mg_score = mg_white - mg_black;
 
-    let mut eg_score = if state.turn == PieceColor::White {
-        eg_white - eg_black
-    } else {
-        eg_black - eg_white
-    };
+    let eg_score = eg_white - eg_black;
 
     //Encourage checkmate by giving a bonus for checking
 
     //it can't be white's turn if black is in check (black would have had to remove
     //the mate threat in the previous turn)
-
-    if state.check(state.turn) {
-        mg_score -= 100; //random choice of value
-        eg_score -= 200;
-    }
 
     //Problem: Promotion of several pawns makes the engine think we are in middle game again.
 

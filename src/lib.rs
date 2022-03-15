@@ -103,8 +103,127 @@ impl BoardState {
         }
     }
 
+    ///Static evaluation
+    ///
+    /// Positive: White's advantage
     pub fn evaluate(&self) -> i32 {
         evaluation::evaluate(self)
+    }
+
+    ///Assumes root has color state.turn
+    pub fn minimax(&mut self, depth: i32) -> Move {
+        let mut best_move = Move::new(Field::new(-2, -2), Field::new(-2, -2), MoveType::Default);
+        //alpha is the most positive eval that white is already assured of at this point
+        //beta is the most negative eval that black is already assured of at this point
+        //Root cannot cut branches! (Otherwise, what would be the point of having a tree?)
+        let mut alpha = i32::MIN;
+        let mut beta = i32::MAX;
+        match self.turn {
+            //White is the maximizing player
+            PieceColor::White => {
+                let mut best_value = i32::MIN;
+                for m in self.generate_moves() {
+                    self.make(m);
+                    //It's now black's turn
+                    let mut score = i32::MIN;
+                    //If this move didn't put white into check, recurse
+                    if !self.check(self.turn.opposite()) {
+                        score = self.minimax_helper(depth - 1, alpha, beta);
+                    }
+                    self.unmake();
+                    if score > best_value {
+                        best_move = m;
+                        best_value = score;
+                    }
+                    if score > alpha {
+                        alpha = score;
+                    }
+                }
+            }
+            //Black is the minimizing player
+            PieceColor::Black => {
+                let mut best_value = i32::MAX;
+                for m in self.generate_moves() {
+                    self.make(m);
+                    //It's now black's turn
+                    let mut score = i32::MAX;
+                    //If this move didn't put white into check, recurse
+                    if !self.check(self.turn.opposite()) {
+                        score = self.minimax_helper(depth - 1, alpha, beta);
+                    }
+                    self.unmake();
+                    if score < best_value {
+                        best_move = m;
+                        best_value = score;
+                    }
+                    if score < beta {
+                        beta = score;
+                    }
+                }
+            }
+        }
+        best_move
+    }
+
+    fn minimax_helper(&mut self, depth: i32, mut alpha: i32, mut beta: i32) -> i32 {
+        //alpha is the most positive eval that white is already assured of at this point
+        //beta is the most negative eval that black is already assured of at this point
+        if depth == 0 {
+            self.evaluate()
+        } else {
+            match self.turn {
+                //White is the maximizing player
+                PieceColor::White => {
+                    let mut best_value = i32::MIN;
+                    for m in self.generate_moves() {
+                        //Branch cut: Don't explore this subtree further if it is already
+                        //obvious that this variant will not be taken.
+                        if beta <= alpha {
+                            return best_value;
+                        }
+                        self.make(m);
+                        //It is now black's turn
+                        let mut score = i32::MIN;
+                        //If this move didn't put white into check, recurse
+                        if !self.check(self.turn.opposite()) {
+                            score = self.minimax_helper(depth - 1, alpha, beta);
+                        }
+                        self.unmake();
+                        if score > best_value {
+                            best_value = score;
+                        }
+                        if score > alpha {
+                            alpha = score;
+                        }
+                    }
+                    best_value
+                }
+                //Black is the minimizing player
+                PieceColor::Black => {
+                    let mut best_value = i32::MAX;
+                    for m in self.generate_moves() {
+                        if beta <= alpha {
+                            return best_value;
+                        }
+                        self.make(m);
+                        //It's now black's turn
+                        let mut score = i32::MAX;
+                        //If this move didn't put white into check, recurse
+                        if !self.check(self.turn.opposite()) {
+                            score = self.minimax_helper(depth - 1, alpha, beta);
+                        }
+                        self.unmake();
+                        if score < best_value {
+                            best_value = score;
+                        }
+                        if score < beta {
+                            beta = score;
+                        }
+                    }
+                    best_value
+                }
+            }
+        }
     }
 
     ///Find the best move for the player whose turn it is by checking all possible moves
@@ -113,14 +232,14 @@ impl BoardState {
     ///
     /// TODO: checkmate is not a valid option! should give infinite score, so that
     /// this variant is always taken!
-    pub fn min_max(&mut self, depth: i32) -> Move {
+    /*pub fn nega_max(&mut self, depth: i32) -> Move {
         let mut best_move = Move::new(Field::new(-2, -2), Field::new(-2, -2), MoveType::Default);
         let mut max_value = i32::MIN;
         for m in self.generate_moves() {
             self.make(m);
             let mut score = i32::MIN;
             if !self.check(self.turn.opposite()) {
-                score = -self.min_max_helper(depth - 1);
+                score = -self.nega_max_helper(depth - 1);
             }
             self.unmake();
             if score > max_value {
@@ -147,7 +266,7 @@ impl BoardState {
     ///
     ///Returns the evaluation of the board after playing the best legal move for the
     /// player whose turn it currently is.
-    fn min_max_helper(&mut self, depth: i32) -> i32 {
+    fn nega_max_helper(&mut self, depth: i32) -> i32 {
         if depth == 0 {
             self.evaluate()
         } else {
@@ -169,7 +288,7 @@ impl BoardState {
                 //If a move lands the current color in check, don't consider the move and
                 //variants resulting from it
                 if !self.check(self.turn.opposite()) {
-                    score = -self.min_max_helper(depth - 1);
+                    score = -self.nega_max_helper(depth - 1);
                 }
 
                 self.unmake();
@@ -184,7 +303,7 @@ impl BoardState {
             }
             max
         }
-    }
+    }*/
 
     ///Move piece by string like "e2e4". Checks for pseudo-legality.
     #[allow(clippy::needless_return)]

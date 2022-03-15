@@ -25,7 +25,7 @@ fn main() {
                     "BLACK IN CHECK (before black's move): {}",
                     b.check(PieceColor::Black).to_string().red()
                 );
-                let m = b.min_max(4);
+                let m = b.minimax(4);
                 b.make(m);
                 b.draw(true);
                 /*println!("Please let me think :)");
