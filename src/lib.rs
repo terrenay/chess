@@ -111,32 +111,49 @@ impl BoardState {
     }
 
     ///Assumes root has color state.turn
-    pub fn minimax(&mut self, depth: i32) -> Move {
-        let mut best_move = Move::new(Field::new(-2, -2), Field::new(-2, -2), MoveType::Default);
+    pub fn minimax(&mut self, depth: i32) -> Option<Move> {
+        //todo!("crasht sobald es ein forced checkmate sieht. returnt normal, best_move wird nie gesetzt. #moves > 0");
+        let mut best_move = None;
         //alpha is the most positive eval that white is already assured of at this point
         //beta is the most negative eval that black is already assured of at this point
         //Root cannot cut branches! (Otherwise, what would be the point of having a tree?)
         let mut alpha = i32::MIN;
         let mut beta = i32::MAX;
+        let mut moves = 0;
         match self.turn {
             //White is the maximizing player
             PieceColor::White => {
                 let mut best_value = i32::MIN;
                 for m in self.generate_moves() {
+                    //If there is a forced checkmate sequence
+                    if alpha == i32::MAX || beta == i32::MIN {
+                        println!("early return");
+                        return best_move;
+                    }
                     self.make(m);
                     //It's now black's turn
-                    let mut score = i32::MIN;
-                    //If this move didn't put white into check, recurse
+                    //If this move didn't put white into check, recurse.
+                    //If it did put white into check, ignore.
                     if !self.check(self.turn.opposite()) {
-                        score = self.minimax_helper(depth - 1, alpha, beta);
+                        let score = self.minimax_helper(depth - 1, alpha, beta);
+                        moves += 1;
+                        if score > best_value {
+                            best_move = Some(m);
+                            best_value = score;
+                        }
+                        if score > alpha {
+                            alpha = score;
+                        }
                     }
                     self.unmake();
-                    if score > best_value {
-                        best_move = m;
-                        best_value = score;
-                    }
-                    if score > alpha {
-                        alpha = score;
+                }
+                //White has no legal moves in the original position
+                if moves == 0 {
+                    if self.checkmate_given_zero_moves(PieceColor::Black) {
+                        println!("CHECKMATE! BLACK WINS!");
+                        debug_assert_eq!(best_value, i32::MIN);
+                    } else {
+                        println!("STALEMATE! THE GAME IS A DRAW!");
                     }
                 }
             }
@@ -144,24 +161,41 @@ impl BoardState {
             PieceColor::Black => {
                 let mut best_value = i32::MAX;
                 for m in self.generate_moves() {
+                    if alpha == i32::MAX || beta == i32::MIN {
+                        return best_move;
+                    }
                     self.make(m);
                     //It's now black's turn
-                    let mut score = i32::MAX;
                     //If this move didn't put white into check, recurse
                     if !self.check(self.turn.opposite()) {
-                        score = self.minimax_helper(depth - 1, alpha, beta);
+                        let score = self.minimax_helper(depth - 1, alpha, beta);
+                        moves += 1;
+                        if score < best_value {
+                            best_move = Some(m);
+                            best_value = score;
+                        }
+                        if score < beta {
+                            beta = score;
+                        }
                     }
                     self.unmake();
-                    if score < best_value {
-                        best_move = m;
-                        best_value = score;
+                }
+                if moves == 0 {
+                    if self.checkmate_given_zero_moves(PieceColor::White) {
+                        println!("CHECKMATE! WHITE WINS!");
+                        debug_assert_eq!(best_value, i32::MAX);
+                    } else {
+                        println!("STALEMATE! THE GAME IS A DRAW!");
                     }
-                    if score < beta {
-                        beta = score;
-                    }
+                    return None;
                 }
             }
         }
+        println!(
+            "normal returnm #moves = {}, bestMove={}",
+            moves,
+            best_move.is_none()
+        );
         best_move
     }
 
@@ -171,6 +205,7 @@ impl BoardState {
         if depth == 0 {
             self.evaluate()
         } else {
+            let mut moves = 0;
             match self.turn {
                 //White is the maximizing player
                 PieceColor::White => {
@@ -178,23 +213,27 @@ impl BoardState {
                     for m in self.generate_moves() {
                         //Branch cut: Don't explore this subtree further if it is already
                         //obvious that this variant will not be taken.
-                        if beta <= alpha {
+                        if beta <= alpha || alpha == i32::MAX || beta == i32::MIN {
                             return best_value;
                         }
                         self.make(m);
                         //It is now black's turn
-                        let mut score = i32::MIN;
                         //If this move didn't put white into check, recurse
                         if !self.check(self.turn.opposite()) {
-                            score = self.minimax_helper(depth - 1, alpha, beta);
+                            let score = self.minimax_helper(depth - 1, alpha, beta);
+                            moves += 1;
+                            if score > best_value {
+                                best_value = score;
+                            }
+                            if score > alpha {
+                                alpha = score;
+                            }
                         }
                         self.unmake();
-                        if score > best_value {
-                            best_value = score;
-                        }
-                        if score > alpha {
-                            alpha = score;
-                        }
+                    }
+                    if moves == 0 && !self.checkmate_given_zero_moves(PieceColor::Black) {
+                        //This position is stalemate
+                        best_value = 0;
                     }
                     best_value
                 }
@@ -202,23 +241,27 @@ impl BoardState {
                 PieceColor::Black => {
                     let mut best_value = i32::MAX;
                     for m in self.generate_moves() {
-                        if beta <= alpha {
+                        if beta <= alpha || alpha == i32::MAX || beta == i32::MIN {
                             return best_value;
                         }
                         self.make(m);
                         //It's now black's turn
-                        let mut score = i32::MAX;
                         //If this move didn't put white into check, recurse
                         if !self.check(self.turn.opposite()) {
-                            score = self.minimax_helper(depth - 1, alpha, beta);
+                            let score = self.minimax_helper(depth - 1, alpha, beta);
+                            moves += 1;
+                            if score < best_value {
+                                best_value = score;
+                            }
+                            if score < beta {
+                                beta = score;
+                            }
                         }
                         self.unmake();
-                        if score < best_value {
-                            best_value = score;
-                        }
-                        if score < beta {
-                            beta = score;
-                        }
+                    }
+                    if moves == 0 && !self.checkmate_given_zero_moves(PieceColor::Black) {
+                        //This position is stalemate
+                        best_value = 0;
                     }
                     best_value
                 }
@@ -417,7 +460,6 @@ impl BoardState {
                                 .pseudo_legal_moves(Field::new(rank, file))
                                 .unwrap(),
                         );
-                        v.extend(self.castling_moves());
                     }
                 }
             }
@@ -681,6 +723,11 @@ impl BoardState {
         }
     }
 
+    ///<b>Precondition: zero legal moves for winning_color.opposite()</b>
+    fn checkmate_given_zero_moves(&self, winning_color: PieceColor) -> bool {
+        self.check(winning_color.opposite())
+    }
+
     ///Returns all valid castling moves of player whose turn it currently is.
     fn castling_moves(&self) -> Vec<Move> {
         let mut v = vec![];
@@ -804,8 +851,8 @@ impl Default for BoardState {
 /// to is ignored.
 #[derive(Copy, Clone)]
 pub struct Move {
-    from: Field,
-    to: Field,
+    pub from: Field,
+    pub to: Field,
     move_type: MoveType,
     promotion: Option<Piece>,
 }
