@@ -13,9 +13,12 @@ fn main() {
         "e" => {
             //engine
             loop {
+                if count > 40 {
+                    break;
+                }
                 count += 1;
                 println!("-- WHITE TO MOVE --");
-                let m = b.minimax(5);
+                let m = b.minimax(4);
                 if m.is_none() {
                     return;
                 }
@@ -24,7 +27,7 @@ fn main() {
                 b.make(m);
                 b.draw(true);
                 println!("-- BLACK TO MOVE --");
-                let m = b.minimax(5);
+                let m = b.minimax(4);
                 if m.is_none() {
                     return;
                 }

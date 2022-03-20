@@ -73,8 +73,7 @@ pub struct BoardState {
     black_queen_castle_lost_ply: Option<u16>,
     white_king_castle_lost_ply: Option<u16>,
     black_king_castle_lost_ply: Option<u16>,
-    white_king: Field,
-    black_king: Field,
+
     //en_passant: Option<Field>,
     moves: Vec<Move>,
     taken: Vec<Piece>,
@@ -83,9 +82,6 @@ pub struct BoardState {
 
 impl BoardState {
     pub fn new() -> Self {
-        let board = Board::new();
-        let (white_king, black_king) = board.king_positions();
-
         Self {
             board: Board::new(),
             turn: PieceColor::White,
@@ -94,8 +90,6 @@ impl BoardState {
             black_queen_castle_lost_ply: None,
             white_king_castle_lost_ply: None,
             black_king_castle_lost_ply: None,
-            white_king,
-            black_king,
             //en_passant: None,
             moves: vec![],
             taken: vec![],
@@ -125,12 +119,21 @@ impl BoardState {
             PieceColor::White => {
                 let mut best_value = i32::MIN;
                 for m in self.generate_moves() {
+                    //In case of forced checkmate for black, score will always be i32::MIN
+                    //(the worst possible outcome for white). Without this, best_move
+                    //would stay None, since no move increases the best outcome. But we still
+                    //want some move to be played, even if it lead to a forced checkmate.
+                    best_move.get_or_insert(m);
+
                     //If there is a forced checkmate sequence
                     if alpha == i32::MAX || beta == i32::MIN {
+                        //todo: wird alpha überhaupt gesetzt für forced checkmate?
                         println!("early return");
                         return best_move;
                     }
+
                     self.make(m);
+
                     //It's now black's turn
                     //If this move didn't put white into check, recurse.
                     //If it did put white into check, ignore.
@@ -147,6 +150,7 @@ impl BoardState {
                     }
                     self.unmake();
                 }
+
                 //White has no legal moves in the original position
                 if moves == 0 {
                     if self.checkmate_given_zero_moves(PieceColor::Black) {
@@ -157,10 +161,12 @@ impl BoardState {
                     }
                 }
             }
+
             //Black is the minimizing player
             PieceColor::Black => {
                 let mut best_value = i32::MAX;
                 for m in self.generate_moves() {
+                    best_move.get_or_insert(m);
                     if alpha == i32::MAX || beta == i32::MIN {
                         return best_move;
                     }
@@ -191,11 +197,6 @@ impl BoardState {
                 }
             }
         }
-        println!(
-            "normal returnm #moves = {}, bestMove={}",
-            moves,
-            best_move.is_none()
-        );
         best_move
     }
 
@@ -460,6 +461,7 @@ impl BoardState {
                                 .pseudo_legal_moves(Field::new(rank, file))
                                 .unwrap(),
                         );
+                        todo!("avoid king captures");
                     }
                 }
             }
@@ -515,11 +517,11 @@ impl BoardState {
             match moving_piece.kind {
                 PieceKind::King => {
                     if moving_piece.color == PieceColor::White {
-                        self.white_king = Field::new(m.to.rank, m.to.file);
+                        self.board.white_king = Field::new(m.to.rank, m.to.file);
                         self.white_king_castle_lost_ply.get_or_insert(self.ply);
                         self.white_queen_castle_lost_ply.get_or_insert(self.ply);
                     } else {
-                        self.black_king = Field::new(m.to.rank, m.to.file);
+                        self.board.black_king = Field::new(m.to.rank, m.to.file);
                         self.black_king_castle_lost_ply.get_or_insert(self.ply);
                         self.black_queen_castle_lost_ply.get_or_insert(self.ply);
                     }
@@ -629,9 +631,9 @@ impl BoardState {
 
                 if matches!(moving_piece.kind, PieceKind::King) {
                     if moving_piece.color == PieceColor::White {
-                        self.white_king = Field::new(m.from.rank, m.from.file);
+                        self.board.white_king = Field::new(m.from.rank, m.from.file);
                     } else {
-                        self.black_king = Field::new(m.from.rank, m.from.file);
+                        self.board.black_king = Field::new(m.from.rank, m.from.file);
                     }
                 }
 
@@ -718,8 +720,8 @@ impl BoardState {
     ///Returns whether color is in check
     pub fn check(&self, color: PieceColor) -> bool {
         match color {
-            PieceColor::White => self.threatened(color, self.white_king),
-            PieceColor::Black => self.threatened(color, self.black_king),
+            PieceColor::White => self.threatened(color, self.board.white_king),
+            PieceColor::Black => self.threatened(color, self.board.black_king),
         }
     }
 
@@ -887,6 +889,8 @@ impl Display for Move {
 
 pub struct Board {
     board: Array2<Square>,
+    white_king: Field,
+    black_king: Field,
 }
 
 impl Board {
@@ -921,6 +925,8 @@ impl Board {
         let mut board = Array2::<Square>::default((12, 12));
         let mut rank = 8;
         let mut file = 1;
+        let mut black_king = None;
+        let mut white_king = None;
 
         //Field 1
 
@@ -956,19 +962,29 @@ impl Board {
                 'n' => board[[i, j]] = Square::Full(Piece::knight(PieceColor::Black)),
                 'r' => board[[i, j]] = Square::Full(Piece::rook(PieceColor::Black)),
                 'q' => board[[i, j]] = Square::Full(Piece::queen(PieceColor::Black)),
-                'k' => board[[i, j]] = Square::Full(Piece::king(PieceColor::Black)),
+                'k' => {
+                    board[[i, j]] = Square::Full(Piece::king(PieceColor::Black));
+                    black_king = Some(Field::new(rank, file));
+                }
                 'P' => board[[i, j]] = Square::Full(Piece::pawn(PieceColor::White)),
                 'B' => board[[i, j]] = Square::Full(Piece::bishop(PieceColor::White)),
                 'N' => board[[i, j]] = Square::Full(Piece::knight(PieceColor::White)),
                 'R' => board[[i, j]] = Square::Full(Piece::rook(PieceColor::White)),
                 'Q' => board[[i, j]] = Square::Full(Piece::queen(PieceColor::White)),
-                'K' => board[[i, j]] = Square::Full(Piece::king(PieceColor::White)),
+                'K' => {
+                    board[[i, j]] = Square::Full(Piece::king(PieceColor::White));
+                    white_king = Some(Field::new(rank, file));
+                }
                 ' ' => break,
                 _ => (),
             }
             file += 1;
         }
-        Board { board }
+        Board {
+            board,
+            white_king: white_king.unwrap(),
+            black_king: black_king.unwrap(),
+        }
     }
 
     ///When it's done, this should check for obstructions. Depends on the piece kind and
@@ -1330,7 +1346,7 @@ impl Board {
 
         let captures: Vec<Move> = v
             .iter()
-            .filter(|to| {
+            .filter(|&&to| {
                 if let Square::Full(p) = self.at(to.rank, to.file) {
                     p.color == opposite
                 } else {
@@ -1345,7 +1361,7 @@ impl Board {
     }
 
     ///White, Black
-    fn king_positions(&self) -> (Field, Field) {
+    /*fn king_positions(&self) -> (Field, Field) {
         let mut white_king = Field::new(0, 0);
         let mut black_king = Field::new(0, 0);
         for rank in 1..=8 {
@@ -1362,7 +1378,7 @@ impl Board {
             }
         }
         (white_king, black_king)
-    }
+    }*/
 
     ///Example: Converts a to 1.
     fn file_letter_to_number(file: char) -> Result<usize, Error> {
