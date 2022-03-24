@@ -13,7 +13,7 @@ fn main() {
         "e" => {
             //engine
             loop {
-                if count > 40 {
+                if count > 50 {
                     break;
                 }
                 count += 1;
@@ -39,9 +39,6 @@ fn main() {
             //human
             loop {
                 count += 1;
-                /*if count > 40 {
-                    break;
-                }*/
                 println!("-- ENTER NEXT MOVE --");
                 println!(
                     "WHITE CURRENTLY IN CHECK: {}",
@@ -55,16 +52,12 @@ fn main() {
                             "BLACK IN CHECK (before black's move): {}",
                             b.check(PieceColor::Black).to_string().red()
                         );
-                        let m = b.minimax(4);
+                        let m = b.minimax(5);
                         if m.is_none() {
                             return;
                         }
                         b.make(m.unwrap());
                         b.draw(true);
-                        /*println!("Please let me think :)");
-                        let m = b.min_max(4);
-                        b.make(m);
-                        b.draw(true);*/
                     }
                     Err(e) => eprintln!("{}", e.to_string().red()),
                 }

@@ -5,7 +5,7 @@ use std::fmt::{self, Display};
 use colored::Colorize;
 use ndarray::prelude::*;
 
-const STARTING_POSITION: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+const STARTING_POSITION: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq";
 
 //Todo: should start to think about organizing this mess into multiple files
 
@@ -82,25 +82,13 @@ pub struct BoardState {
 
 impl BoardState {
     pub fn new() -> Self {
-        Self {
-            board: Board::new(),
-            turn: PieceColor::White,
-            ply: 1,
-            white_queen_castle_lost_ply: None,
-            black_queen_castle_lost_ply: None,
-            white_king_castle_lost_ply: None,
-            black_king_castle_lost_ply: None,
-            //en_passant: None,
-            moves: vec![],
-            taken: vec![],
-            //white_attack_map: AttackMap::new(),
-        }
+        BoardState::from_fen(STARTING_POSITION).unwrap()
     }
 
     ///Static evaluation
     ///
     /// Positive: White's advantage
-    pub fn evaluate(&self) -> i32 {
+    pub fn evaluate(&mut self) -> i32 {
         evaluation::evaluate(self)
     }
 
@@ -155,10 +143,10 @@ impl BoardState {
                 if moves == 0 {
                     if self.checkmate_given_zero_moves(PieceColor::Black) {
                         println!("CHECKMATE! BLACK WINS!");
-                        debug_assert_eq!(best_value, i32::MIN);
                     } else {
                         println!("STALEMATE! THE GAME IS A DRAW!");
                     }
+                    return None;
                 }
             }
 
@@ -197,6 +185,7 @@ impl BoardState {
                 }
             }
         }
+        println!("Found {} legal moves", moves);
         best_move
     }
 
@@ -461,11 +450,11 @@ impl BoardState {
                                 .pseudo_legal_moves(Field::new(rank, file))
                                 .unwrap(),
                         );
-                        todo!("avoid king captures");
                     }
                 }
             }
         }
+        v = self.board.avoid_king_captures(v);
         v
     }
 
@@ -841,6 +830,122 @@ impl BoardState {
         }
         println!();
     }
+
+    ///Only field 1 works at the moment (only position layout, with no further info)
+    ///
+    /// TODO: king position und castling rigts werden ignoriert!
+    fn from_fen(fen: &str) -> Result<BoardState, Error> {
+        let mut board = Array2::<Square>::default((12, 12));
+        let mut rank = 8;
+        let mut file = 1;
+        let mut black_king = None;
+        let mut white_king = None;
+        let chars = &mut fen.chars();
+
+        //Field 1
+
+        //Padding around the board
+        for i in 0..12 {
+            for j in 0..12 {
+                //better according to clippy
+                if !(2..=9).contains(&i) {
+                    board[[i, j]] = Square::Padding;
+                } else {
+                    board[[i, 0]] = Square::Padding;
+                    board[[i, 1]] = Square::Padding;
+                    board[[i, 10]] = Square::Padding;
+                    board[[i, 11]] = Square::Padding;
+                }
+            }
+        }
+
+        for c in chars.by_ref() {
+            let (i, j) = Board::to_board(rank, file);
+            if let Some(num) = c.to_digit(10) {
+                file += num as i8;
+                continue;
+            }
+            match c {
+                '/' => {
+                    rank -= 1;
+                    file = 1;
+                    continue;
+                }
+                'p' => board[[i, j]] = Square::Full(Piece::pawn(PieceColor::Black)),
+                'b' => board[[i, j]] = Square::Full(Piece::bishop(PieceColor::Black)),
+                'n' => board[[i, j]] = Square::Full(Piece::knight(PieceColor::Black)),
+                'r' => board[[i, j]] = Square::Full(Piece::rook(PieceColor::Black)),
+                'q' => board[[i, j]] = Square::Full(Piece::queen(PieceColor::Black)),
+                'k' => {
+                    board[[i, j]] = Square::Full(Piece::king(PieceColor::Black));
+                    black_king = Some(Field::new(rank, file));
+                }
+                'P' => board[[i, j]] = Square::Full(Piece::pawn(PieceColor::White)),
+                'B' => board[[i, j]] = Square::Full(Piece::bishop(PieceColor::White)),
+                'N' => board[[i, j]] = Square::Full(Piece::knight(PieceColor::White)),
+                'R' => board[[i, j]] = Square::Full(Piece::rook(PieceColor::White)),
+                'Q' => board[[i, j]] = Square::Full(Piece::queen(PieceColor::White)),
+                'K' => {
+                    board[[i, j]] = Square::Full(Piece::king(PieceColor::White));
+                    white_king = Some(Field::new(rank, file));
+                }
+                ' ' => break,
+                _ => (),
+            }
+            file += 1;
+        }
+
+        let board = Board {
+            board,
+            white_king: white_king.unwrap(),
+            black_king: black_king.unwrap(),
+        };
+
+        //Default turn is white
+
+        let mut turn = PieceColor::White;
+
+        if let Some(c) = chars.by_ref().next() {
+            turn = match c {
+                'w' | 'W' => PieceColor::White,
+                'b' | 'B' => PieceColor::Black,
+                _ => return Err(Error::Parse),
+            }
+        };
+
+        chars.by_ref().next(); //Consume the whitespace if it's there
+
+        //Castling rights
+        //Default: No castling rights.
+
+        let mut white_queen_castle_lost_ply = Some(0);
+        let mut black_queen_castle_lost_ply = Some(0);
+        let mut white_king_castle_lost_ply = Some(0);
+        let mut black_king_castle_lost_ply = Some(0);
+
+        for c in chars.by_ref() {
+            match c {
+                'K' => white_king_castle_lost_ply = None,
+                'Q' => white_queen_castle_lost_ply = None,
+                'k' => black_king_castle_lost_ply = None,
+                'q' => black_queen_castle_lost_ply = None,
+                ' ' => break,
+                _ => return Err(Error::Parse),
+            }
+        }
+
+        Ok(BoardState {
+            board,
+            turn,
+            ply: 1,
+            white_queen_castle_lost_ply,
+            black_queen_castle_lost_ply,
+            white_king_castle_lost_ply,
+            black_king_castle_lost_ply,
+            moves: vec![],
+            taken: vec![],
+        })
+    }
 }
 
 impl Default for BoardState {
@@ -894,10 +999,6 @@ pub struct Board {
 }
 
 impl Board {
-    pub fn new() -> Board {
-        Board::from_fen(STARTING_POSITION)
-    }
-
     ///Readonly!
     /// Out-of-bounds are supported as far as padding goes. That is, rank 0 and rank -1
     /// would be padding rows, but rank -2 would panic.
@@ -916,75 +1017,6 @@ impl Board {
 
     fn empty(&self, rank: i8, file: i8) -> bool {
         matches!(self.at(rank, file), Square::Empty)
-    }
-
-    ///Only field 1 works at the moment (only position layout, with no further info)
-    ///
-    /// TODO: king position und castling rigts werden ignoriert!
-    fn from_fen(fen: &str) -> Board {
-        let mut board = Array2::<Square>::default((12, 12));
-        let mut rank = 8;
-        let mut file = 1;
-        let mut black_king = None;
-        let mut white_king = None;
-
-        //Field 1
-
-        //Padding around the board
-        for i in 0..12 {
-            for j in 0..12 {
-                //better according to clippy
-                if !(2..=9).contains(&i) {
-                    board[[i, j]] = Square::Padding;
-                } else {
-                    board[[i, 0]] = Square::Padding;
-                    board[[i, 1]] = Square::Padding;
-                    board[[i, 10]] = Square::Padding;
-                    board[[i, 11]] = Square::Padding;
-                }
-            }
-        }
-
-        for c in fen.chars() {
-            let (i, j) = Board::to_board(rank, file);
-            if let Some(num) = c.to_digit(10) {
-                file += num as i8;
-                continue;
-            }
-            match c {
-                '/' => {
-                    rank -= 1;
-                    file = 1;
-                    continue;
-                }
-                'p' => board[[i, j]] = Square::Full(Piece::pawn(PieceColor::Black)),
-                'b' => board[[i, j]] = Square::Full(Piece::bishop(PieceColor::Black)),
-                'n' => board[[i, j]] = Square::Full(Piece::knight(PieceColor::Black)),
-                'r' => board[[i, j]] = Square::Full(Piece::rook(PieceColor::Black)),
-                'q' => board[[i, j]] = Square::Full(Piece::queen(PieceColor::Black)),
-                'k' => {
-                    board[[i, j]] = Square::Full(Piece::king(PieceColor::Black));
-                    black_king = Some(Field::new(rank, file));
-                }
-                'P' => board[[i, j]] = Square::Full(Piece::pawn(PieceColor::White)),
-                'B' => board[[i, j]] = Square::Full(Piece::bishop(PieceColor::White)),
-                'N' => board[[i, j]] = Square::Full(Piece::knight(PieceColor::White)),
-                'R' => board[[i, j]] = Square::Full(Piece::rook(PieceColor::White)),
-                'Q' => board[[i, j]] = Square::Full(Piece::queen(PieceColor::White)),
-                'K' => {
-                    board[[i, j]] = Square::Full(Piece::king(PieceColor::White));
-                    white_king = Some(Field::new(rank, file));
-                }
-                ' ' => break,
-                _ => (),
-            }
-            file += 1;
-        }
-        Board {
-            board,
-            white_king: white_king.unwrap(),
-            black_king: black_king.unwrap(),
-        }
     }
 
     ///When it's done, this should check for obstructions. Depends on the piece kind and
@@ -1360,26 +1392,6 @@ impl Board {
         default_moves
     }
 
-    ///White, Black
-    /*fn king_positions(&self) -> (Field, Field) {
-        let mut white_king = Field::new(0, 0);
-        let mut black_king = Field::new(0, 0);
-        for rank in 1..=8 {
-            for file in 1..=8 {
-                if let Square::Full(p) = self.at(rank, file) {
-                    if matches!(p.kind, PieceKind::King) {
-                        if p.color == PieceColor::White {
-                            white_king = Field::new(rank, file);
-                        } else {
-                            black_king = Field::new(rank, file);
-                        }
-                    }
-                }
-            }
-        }
-        (white_king, black_king)
-    }*/
-
     ///Example: Converts a to 1.
     fn file_letter_to_number(file: char) -> Result<usize, Error> {
         match file {
@@ -1421,6 +1433,12 @@ impl Board {
         //Thus we accept unsigned ints.
         debug_assert!(rank >= -1 && rank <= 10 && file >= -1 && file <= 10);
         ((10 - rank) as usize, (file + 1) as usize)
+    }
+
+    fn avoid_king_captures(&self, v: Vec<Move>) -> Vec<Move> {
+        v.into_iter()
+            .filter(|m| m.to != self.white_king && m.to != self.black_king)
+            .collect()
     }
 
     /*
@@ -1533,12 +1551,6 @@ impl Board {
         }
         println!();
     }*/
-}
-
-impl Default for Board {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 #[derive(Clone, Copy, Debug)]

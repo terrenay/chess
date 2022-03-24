@@ -210,7 +210,22 @@ fn gamephase_value(kind: PieceKind) -> i32 {
 ///Positive: White has an advantage
 ///
 /// Negative: Black has an advantage
-pub fn evaluate(state: &BoardState) -> i32 {
+pub fn evaluate(state: &mut BoardState) -> i32 {
+    //If current player has no legal moves (every pseudo-legal move lands him in check)
+    if no_legal_moves(state) {
+        //If the current player is currently in check as well, it's checkmate
+        if state.checkmate_given_zero_moves(state.turn.opposite()) {
+            //If white is checkmated, evaluate to -infty
+            return if state.turn == PieceColor::White {
+                i32::MIN
+            } else {
+                i32::MAX
+            };
+        } else {
+            return 0; //No legal moves but current player not in check -> stalemate
+        }
+    }
+
     let board = &state.board;
     let mut mg_white = 0;
     let mut mg_black = 0;
@@ -262,4 +277,16 @@ pub fn evaluate(state: &BoardState) -> i32 {
     let eg_phase = 24 - mg_phase;
 
     (mg_score * mg_phase + eg_score * eg_phase) / 24
+}
+
+fn no_legal_moves(state: &mut BoardState) -> bool {
+    for m in state.generate_moves() {
+        state.make(m);
+        if !state.check(state.turn.opposite()) {
+            state.unmake();
+            return false;
+        }
+        state.unmake();
+    }
+    true
 }
