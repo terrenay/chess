@@ -961,10 +961,26 @@ impl BoardState {
 
         for c in chars.by_ref() {
             match c {
-                'K' => white_king_castle_lost_ply = None,
-                'Q' => white_queen_castle_lost_ply = None,
-                'k' => black_king_castle_lost_ply = None,
-                'q' => black_queen_castle_lost_ply = None,
+                'K' => {
+                    assert!(white_king.unwrap() == Field::new(1, 5));
+                    assert!(board.piece_at(Field::new(1, 8), Piece::rook(PieceColor::White)));
+                    white_king_castle_lost_ply = None
+                }
+                'Q' => {
+                    assert!(white_king.unwrap() == Field::new(1, 5));
+                    assert!(board.piece_at(Field::new(1, 1), Piece::rook(PieceColor::White)));
+                    white_queen_castle_lost_ply = None
+                }
+                'k' => {
+                    assert!(black_king.unwrap() == Field::new(8, 5));
+                    assert!(board.piece_at(Field::new(8, 8), Piece::rook(PieceColor::Black)));
+                    black_king_castle_lost_ply = None
+                }
+                'q' => {
+                    assert!(black_king.unwrap() == Field::new(8, 5));
+                    assert!(board.piece_at(Field::new(8, 1), Piece::rook(PieceColor::Black)));
+                    black_queen_castle_lost_ply = None
+                }
                 ' ' => break,
                 _ => return Err(Error::Parse),
             }
@@ -1466,6 +1482,14 @@ impl Board {
             .collect()
     }
 
+    ///Returns true if piece is on that field.
+    fn piece_at(&self, field: Field, piece: Piece) -> bool {
+        if let Square::Full(p) = self.at(field.rank, field.file) {
+            return p == piece;
+        }
+        false
+    }
+
     /*
     pub fn draw_pseudo_legal_moves(&self, pos_rank: i8, pos_file: i8) {
         let v = self.pseudo_legal_moves(pos_rank, pos_file).unwrap();
@@ -1578,7 +1602,7 @@ impl Board {
     }*/
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Eq, PartialEq, Clone, Copy, Debug)]
 enum PieceKind {
     Pawn,
     Bishop,
@@ -1588,7 +1612,7 @@ enum PieceKind {
     King,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Eq, PartialEq, Clone, Copy, Debug)]
 pub struct Piece {
     kind: PieceKind,
     color: PieceColor,
@@ -1716,7 +1740,7 @@ impl Display for Field {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PieceColor {
     Black,
     White,
@@ -1808,7 +1832,7 @@ mod tests {
         assert!(b.check(PieceColor::Black));
         assert_eq!(b.evaluate(), i32::MAX);
     }
-    //wieso sieht weiss nicht, dass ein move ihm +infty bringt?
+
     #[test]
     fn mate_in_1_depth_2() {
         let mut b = BoardState::from_fen("1k6/ppp3Q1/8/8/8/8/6K1/8 w").unwrap();
@@ -1830,12 +1854,18 @@ mod tests {
         assert_eq!(b.evaluate(), i32::MAX);
     }
 
+    //This takes a long time, disable if not needed
     #[test]
-    fn bug_move_rook_in_check() {
-        let mut b =
-            BoardState::from_fen("4k2r/pp3ppp/2p5/4nQ2/1bq5/4P1NP/PPPr1PP1/R3K2R b k").unwrap();
-        let m = b.minimax(3);
-        assert_eq!(m.1, i32::MIN);
+    fn mate_in_5_depth_5() {
+        let mut b = BoardState::from_fen("r5k1/1bp3pp/rp6/3N4/4P3/P4R2/6PP/5RK1 w").unwrap();
+        let m = b.minimax(5);
+        assert!(m.1 == i32::MAX);
+    }
+
+    #[test]
+    #[should_panic]
+    fn castling_rights_in_fen_but_impossible() {
+        BoardState::from_fen("rnbqkbnr/pp1p3p/2p3p1/4pp2/8/4PN2/PPPPBPPP/RNBQ1RK1 w KQkq").unwrap();
     }
 
     /*
