@@ -1,0 +1,11 @@
+There were two bugs in minimax that prevented checkmate control from working properly. 
+
+1) Black and White were swapped when making sure that it was check given that 0 legal moves were
+found. For that reason, the program sometimes classified checkmates as stalemates and did not 
+play moves leading to that position.
+
+2) When one side can force checkmate, the other side still has to play SOME move (even though
+all of them have the worst possible dynamic evaluation). For that reason, the first move minimax
+finds is set as a default move. Unfortunately, I set the first OVERALL move as a default instead
+of the first LEGAL move. That's why, once black had found a forced checkmate, the engine played 
+rook a1 to b1 (first move in generate()), even though this left the king in check.

@@ -97,7 +97,7 @@ impl BoardState {
 
     ///Assumes root has color state.turn
     pub fn minimax(&mut self, depth: i32) -> (Option<Move>, i32) {
-        println!("Enter minimax, depth {}", depth);
+        // println!("Enter minimax, depth {}", depth);
         //todo!("crasht sobald es ein forced checkmate sieht. returnt normal, best_move wird nie gesetzt. #moves > 0");
         let mut best_move = None;
         //alpha is the most positive eval that white is already assured of at this point
@@ -111,38 +111,37 @@ impl BoardState {
             PieceColor::White => {
                 let mut best_value = i32::MIN;
                 for m in self.generate_moves() {
-                    println!("root: white try move {}", m);
-                    //In case of forced checkmate for black, score will always be i32::MIN
-                    //(the worst possible outcome for white). Without this, best_move
-                    //would stay None, since no move increases the best outcome. But we still
-                    //want some move to be played, even if it lead to a forced checkmate.
-                    best_move.get_or_insert(m);
+                    // println!("root: white try move {}", m);
 
                     if alpha == i32::MAX || beta == i32::MIN {
-                        println!("forced checkmate, would have been ignored before");
+                        println!("forced checkmate, early return.");
+                        return (best_move, best_value);
                     }
 
                     self.make(m);
-                    self.draw_board(true);
+                    // self.draw_board(true);
 
                     //It's now black's turn
                     //If this move didn't put white into check, recurse.
                     //If it did put white into check, ignore.
                     if !self.check(self.turn.opposite()) {
-                        println!("root: didnt put white in check.");
+                        //In case of a forced checkmate sequence, just play the first
+                        //LEGAL move (legal = does not put me in check)
+                        best_move.get_or_insert(m);
+                        // println!("root: didnt put white in check.");
                         let score = self.minimax_helper(depth - 1, alpha, beta);
                         moves += 1;
                         if score > best_value {
                             best_move = Some(m);
                             best_value = score;
-                            println!("root: best value updated to: {}", best_value);
+                            // println!("root: best value updated to: {}", best_value);
                         }
                         if score > alpha {
                             alpha = score;
-                            println!("root: alpha updated to: {}", alpha);
+                            // println!("root: alpha updated to: {}", alpha);
                         }
                     } else {
-                        println!("root: but put white in check");
+                        // println!("root: but put white in check");
                     }
                     self.unmake();
                 }
@@ -157,7 +156,7 @@ impl BoardState {
                         return (None, 0);
                     }
                 }
-
+                println!("Found {} legal moves", moves);
                 (best_move, best_value)
             }
 
@@ -165,30 +164,31 @@ impl BoardState {
             PieceColor::Black => {
                 let mut best_value = i32::MAX;
                 for m in self.generate_moves() {
-                    println!("root: black try move {}", m);
-                    best_move.get_or_insert(m);
+                    // println!("root: black try move {}", m);
                     if alpha == i32::MAX || beta == i32::MIN {
-                        println!("forced checkmate, would have been ignored before");
+                        println!("forced checkmate, early return.");
+                        return (best_move, best_value);
                     }
                     self.make(m);
-                    self.draw_board(true);
+                    // self.draw_board(true);
                     //It's now black's turn
                     //If this move didn't put white into check, recurse
                     if !self.check(self.turn.opposite()) {
-                        println!("root: didnt put black in check");
+                        best_move.get_or_insert(m);
+                        // println!("root: didnt put black in check");
                         let score = self.minimax_helper(depth - 1, alpha, beta);
                         moves += 1;
                         if score < best_value {
                             best_move = Some(m);
                             best_value = score;
-                            println!("root: best value updated to: {}", best_value);
+                            // println!("root: best value updated to: {}", best_value);
                         }
                         if score < beta {
                             beta = score;
-                            println!("root: beta updated to: {}", beta);
+                            // println!("root: beta updated to: {}", beta);
                         }
                     } else {
-                        println!("root: but put black in check");
+                        // println!("root: but put black in check");
                     }
                     self.unmake();
                 }
@@ -213,7 +213,7 @@ impl BoardState {
         //beta is the most negative eval that black is already assured of at this point
         if depth == 0 {
             let res = self.evaluate();
-            println!("call evaluate() returned {}", res);
+            // println!("call evaluate() returned {}", res);
             res
         } else {
             let mut moves = 0;
@@ -222,7 +222,7 @@ impl BoardState {
                 PieceColor::White => {
                     let mut best_value = i32::MIN;
                     for m in self.generate_moves() {
-                        println!("{}: white try move {}", depth, m);
+                        // println!("{}: white try move {}", depth, m);
                         //Branch cut: Don't explore this subtree further if it is already
                         //obvious that this variant will not be taken.
                         if beta <= alpha {
@@ -230,30 +230,30 @@ impl BoardState {
                             return best_value;
                         }
                         self.make(m);
-                        self.draw_board(true);
+                        // self.draw_board(true);
                         //It is now black's turn
                         //If this move didn't put white into check, recurse
                         if !self.check(self.turn.opposite()) {
-                            println!("{}: didnt put white in check", depth);
+                            // println!("{}: didnt put white in check", depth);
                             let score = self.minimax_helper(depth - 1, alpha, beta);
                             moves += 1;
                             if score > best_value {
                                 best_value = score;
-                                println!("{}: best value updated to: {}", depth, best_value);
+                                // println!("{}: best value updated to: {}", depth, best_value);
                             }
                             if score > alpha {
                                 alpha = score;
-                                println!("{}: alpha updated to: {}", depth, alpha);
+                                // println!("{}: alpha updated to: {}", depth, alpha);
                             }
                         } else {
-                            println!("{}: but put white in check", depth);
+                            // println!("{}: but put white in check", depth);
                         }
                         self.unmake();
                     }
                     if moves == 0 && !self.checkmate_given_zero_moves(PieceColor::Black) {
                         //This position is stalemate
                         best_value = 0;
-                        println!("{}: no moves but no checkmate", depth);
+                        // println!("{}: no moves but no checkmate", depth);
                     }
                     best_value
                 }
@@ -261,36 +261,36 @@ impl BoardState {
                 PieceColor::Black => {
                     let mut best_value = i32::MAX;
                     for m in self.generate_moves() {
-                        println!("{}: black try move {}", depth, m);
+                        // println!("{}: black try move {}", depth, m);
                         if beta <= alpha {
-                            println!("beta <= alpha: return");
+                            // println!("beta <= alpha: return");
                             return best_value;
                         }
                         self.make(m);
-                        self.draw_board(true);
+                        // self.draw_board(true);
                         //It's now black's turn
                         //If this move didn't put white into check, recurse
                         if !self.check(self.turn.opposite()) {
-                            println!("{}: didnt put black in check", depth);
+                            // println!("{}: didnt put black in check", depth);
                             let score = self.minimax_helper(depth - 1, alpha, beta);
                             moves += 1;
                             if score < best_value {
                                 best_value = score;
-                                println!("{}: best value updated to: {}", depth, best_value);
+                                // println!("{}: best value updated to: {}", depth, best_value);
                             }
                             if score < beta {
                                 beta = score;
-                                println!("{}: beta updated to: {}", depth, beta);
+                                // println!("{}: beta updated to: {}", depth, beta);
                             }
                         } else {
-                            println!("{}: but put black in check", depth);
+                            // println!("{}: but put black in check", depth);
                         }
                         self.unmake();
                     }
                     if moves == 0 && !self.checkmate_given_zero_moves(PieceColor::White) {
                         //This position is stalemate
                         best_value = 0;
-                        println!("{}: no moves but no checkmate", depth);
+                        // println!("{}: no moves but no checkmate", depth);
                     }
                     best_value
                 }
@@ -1832,7 +1832,6 @@ mod tests {
 
     #[test]
     fn bug_move_rook_in_check() {
-        //todo!
         let mut b =
             BoardState::from_fen("4k2r/pp3ppp/2p5/4nQ2/1bq5/4P1NP/PPPr1PP1/R3K2R b k").unwrap();
         let m = b.minimax(3);
