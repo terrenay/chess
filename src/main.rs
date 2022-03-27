@@ -18,7 +18,7 @@ fn main() {
                 }
                 count += 1;
                 println!("-- WHITE TO MOVE --");
-                let m = b.minimax(4);
+                let m = b.minimax(4).0;
                 if m.is_none() {
                     return;
                 }
@@ -27,7 +27,7 @@ fn main() {
                 b.make(m);
                 b.draw(true);
                 println!("-- BLACK TO MOVE --");
-                let m = b.minimax(4);
+                let m = b.minimax(4).0;
                 if m.is_none() {
                     return;
                 }
@@ -52,7 +52,7 @@ fn main() {
                             "BLACK IN CHECK (before black's move): {}",
                             b.check(PieceColor::Black).to_string().red()
                         );
-                        let m = b.minimax(5);
+                        let m = b.minimax(5).0;
                         if m.is_none() {
                             return;
                         }

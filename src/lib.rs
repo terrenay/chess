@@ -1,3 +1,4 @@
+//#![warn(clippy::all, clippy::pedantic, clippy::nursery, clippy::cargo)]
 mod evaluation;
 
 use std::fmt::{self, Display};
@@ -59,11 +60,11 @@ impl AttackMap {
     }
 }*/
 
-///Currently the idea is to have a single instance of BoardState that is then modified.
+///Currently the idea is to have a single instance of `BoardState` that is then modified.
 /// The other option would be to clone it each ply, but that seems like a waste of
 /// resources.
 ///
-/// For multithreading, I could later clone the BoardState at some node and have each
+/// For multithreading, I could later clone the `BoardState` at some node and have each
 /// thread modify its own copy downwards.
 pub struct BoardState {
     pub board: Board,
@@ -82,7 +83,7 @@ pub struct BoardState {
 
 impl BoardState {
     pub fn new() -> Self {
-        BoardState::from_fen(STARTING_POSITION).unwrap()
+        Self::from_fen(STARTING_POSITION).unwrap()
     }
 
     ///Static evaluation
@@ -92,8 +93,11 @@ impl BoardState {
         evaluation::evaluate(self)
     }
 
+    //Vielleicht muss ich in der root node überprüfen, ob ich aktuell in schach stehe!
+
     ///Assumes root has color state.turn
-    pub fn minimax(&mut self, depth: i32) -> Option<Move> {
+    pub fn minimax(&mut self, depth: i32) -> (Option<Move>, i32) {
+        println!("Enter minimax, depth {}", depth);
         //todo!("crasht sobald es ein forced checkmate sieht. returnt normal, best_move wird nie gesetzt. #moves > 0");
         let mut best_move = None;
         //alpha is the most positive eval that white is already assured of at this point
@@ -107,34 +111,38 @@ impl BoardState {
             PieceColor::White => {
                 let mut best_value = i32::MIN;
                 for m in self.generate_moves() {
+                    println!("root: white try move {}", m);
                     //In case of forced checkmate for black, score will always be i32::MIN
                     //(the worst possible outcome for white). Without this, best_move
                     //would stay None, since no move increases the best outcome. But we still
                     //want some move to be played, even if it lead to a forced checkmate.
                     best_move.get_or_insert(m);
 
-                    //If there is a forced checkmate sequence
                     if alpha == i32::MAX || beta == i32::MIN {
-                        //todo: wird alpha überhaupt gesetzt für forced checkmate?
-                        println!("early return");
-                        return best_move;
+                        println!("forced checkmate, would have been ignored before");
                     }
 
                     self.make(m);
+                    self.draw_board(true);
 
                     //It's now black's turn
                     //If this move didn't put white into check, recurse.
                     //If it did put white into check, ignore.
                     if !self.check(self.turn.opposite()) {
+                        println!("root: didnt put white in check.");
                         let score = self.minimax_helper(depth - 1, alpha, beta);
                         moves += 1;
                         if score > best_value {
                             best_move = Some(m);
                             best_value = score;
+                            println!("root: best value updated to: {}", best_value);
                         }
                         if score > alpha {
                             alpha = score;
+                            println!("root: alpha updated to: {}", alpha);
                         }
+                    } else {
+                        println!("root: but put white in check");
                     }
                     self.unmake();
                 }
@@ -143,57 +151,70 @@ impl BoardState {
                 if moves == 0 {
                     if self.checkmate_given_zero_moves(PieceColor::Black) {
                         println!("CHECKMATE! BLACK WINS!");
+                        return (None, i32::MIN);
                     } else {
                         println!("STALEMATE! THE GAME IS A DRAW!");
+                        return (None, 0);
                     }
-                    return None;
                 }
+
+                (best_move, best_value)
             }
 
             //Black is the minimizing player
             PieceColor::Black => {
                 let mut best_value = i32::MAX;
                 for m in self.generate_moves() {
+                    println!("root: black try move {}", m);
                     best_move.get_or_insert(m);
                     if alpha == i32::MAX || beta == i32::MIN {
-                        return best_move;
+                        println!("forced checkmate, would have been ignored before");
                     }
                     self.make(m);
+                    self.draw_board(true);
                     //It's now black's turn
                     //If this move didn't put white into check, recurse
                     if !self.check(self.turn.opposite()) {
+                        println!("root: didnt put black in check");
                         let score = self.minimax_helper(depth - 1, alpha, beta);
                         moves += 1;
                         if score < best_value {
                             best_move = Some(m);
                             best_value = score;
+                            println!("root: best value updated to: {}", best_value);
                         }
                         if score < beta {
                             beta = score;
+                            println!("root: beta updated to: {}", beta);
                         }
+                    } else {
+                        println!("root: but put black in check");
                     }
                     self.unmake();
                 }
                 if moves == 0 {
                     if self.checkmate_given_zero_moves(PieceColor::White) {
                         println!("CHECKMATE! WHITE WINS!");
-                        debug_assert_eq!(best_value, i32::MAX);
+                        return (None, i32::MAX);
                     } else {
                         println!("STALEMATE! THE GAME IS A DRAW!");
+                        return (None, 0);
                     }
-                    return None;
                 }
+
+                println!("Found {} legal moves", moves);
+                (best_move, best_value)
             }
         }
-        println!("Found {} legal moves", moves);
-        best_move
     }
 
     fn minimax_helper(&mut self, depth: i32, mut alpha: i32, mut beta: i32) -> i32 {
         //alpha is the most positive eval that white is already assured of at this point
         //beta is the most negative eval that black is already assured of at this point
         if depth == 0 {
-            self.evaluate()
+            let res = self.evaluate();
+            println!("call evaluate() returned {}", res);
+            res
         } else {
             let mut moves = 0;
             match self.turn {
@@ -201,29 +222,38 @@ impl BoardState {
                 PieceColor::White => {
                     let mut best_value = i32::MIN;
                     for m in self.generate_moves() {
+                        println!("{}: white try move {}", depth, m);
                         //Branch cut: Don't explore this subtree further if it is already
                         //obvious that this variant will not be taken.
-                        if beta <= alpha || alpha == i32::MAX || beta == i32::MIN {
+                        if beta <= alpha {
+                            // println!("beta <= alpha: return");
                             return best_value;
                         }
                         self.make(m);
+                        self.draw_board(true);
                         //It is now black's turn
                         //If this move didn't put white into check, recurse
                         if !self.check(self.turn.opposite()) {
+                            println!("{}: didnt put white in check", depth);
                             let score = self.minimax_helper(depth - 1, alpha, beta);
                             moves += 1;
                             if score > best_value {
                                 best_value = score;
+                                println!("{}: best value updated to: {}", depth, best_value);
                             }
                             if score > alpha {
                                 alpha = score;
+                                println!("{}: alpha updated to: {}", depth, alpha);
                             }
+                        } else {
+                            println!("{}: but put white in check", depth);
                         }
                         self.unmake();
                     }
                     if moves == 0 && !self.checkmate_given_zero_moves(PieceColor::Black) {
                         //This position is stalemate
                         best_value = 0;
+                        println!("{}: no moves but no checkmate", depth);
                     }
                     best_value
                 }
@@ -231,27 +261,36 @@ impl BoardState {
                 PieceColor::Black => {
                     let mut best_value = i32::MAX;
                     for m in self.generate_moves() {
-                        if beta <= alpha || alpha == i32::MAX || beta == i32::MIN {
+                        println!("{}: black try move {}", depth, m);
+                        if beta <= alpha {
+                            println!("beta <= alpha: return");
                             return best_value;
                         }
                         self.make(m);
+                        self.draw_board(true);
                         //It's now black's turn
                         //If this move didn't put white into check, recurse
                         if !self.check(self.turn.opposite()) {
+                            println!("{}: didnt put black in check", depth);
                             let score = self.minimax_helper(depth - 1, alpha, beta);
                             moves += 1;
                             if score < best_value {
                                 best_value = score;
+                                println!("{}: best value updated to: {}", depth, best_value);
                             }
                             if score < beta {
                                 beta = score;
+                                println!("{}: beta updated to: {}", depth, beta);
                             }
+                        } else {
+                            println!("{}: but put black in check", depth);
                         }
                         self.unmake();
                     }
-                    if moves == 0 && !self.checkmate_given_zero_moves(PieceColor::Black) {
+                    if moves == 0 && !self.checkmate_given_zero_moves(PieceColor::White) {
                         //This position is stalemate
                         best_value = 0;
+                        println!("{}: no moves but no checkmate", depth);
                     }
                     best_value
                 }
@@ -808,7 +847,7 @@ impl BoardState {
                 if show_prev {
                     if let Some(&last) = self.moves.last() {
                         if last.from == field || last.to == field {
-                            tile = tile.on_truecolor(122, 156, 70)
+                            tile = tile.on_truecolor(122, 156, 70);
                         }
                     }
                 }
@@ -831,9 +870,6 @@ impl BoardState {
         println!();
     }
 
-    ///Only field 1 works at the moment (only position layout, with no further info)
-    ///
-    /// TODO: king position und castling rigts werden ignoriert!
     fn from_fen(fen: &str) -> Result<BoardState, Error> {
         let mut board = Array2::<Square>::default((12, 12));
         let mut rank = 8;
@@ -965,7 +1001,7 @@ pub struct Move {
 }
 
 impl Move {
-    fn new(from: Field, to: Field, move_type: MoveType) -> Self {
+    const fn new(from: Field, to: Field, move_type: MoveType) -> Self {
         Move {
             from,
             to,
@@ -976,7 +1012,7 @@ impl Move {
 
     ///Generate a new promotion move.
     /// To use only for pawns!
-    fn promotion(from: Field, to: Field, move_type: MoveType, p: Piece) -> Self {
+    const fn promotion(from: Field, to: Field, move_type: MoveType, p: Piece) -> Self {
         Move {
             from,
             to,
@@ -1019,18 +1055,7 @@ impl Board {
         matches!(self.at(rank, file), Square::Empty)
     }
 
-    ///When it's done, this should check for obstructions. Depends on the piece kind and
-    /// the current position of the piece. Input: y and x on the array (with padding)
-    /// Supports:
-    /// -Pawn
-    /// -Knight
-    /// -King
-    /// -Rook
-    ///
-    /// todo: MOVES IN EIGENES STRUCT/FILE TUN
-    /// -sliding pieces brauchen viel zu lange für den check
-    /// -sliding pieces müssten eigentlich nur eine richtung berechnen, wenn ich
-    /// den vorgeschlagenen move, der überprüft wird, auch beachten würde
+    ///May return NoPieceOnField Error
     fn pseudo_legal_moves(&self, from: Field) -> Result<Vec<Move>, Error> {
         let Field { rank, file } = from;
         match self.at(rank, file) {
@@ -1251,7 +1276,7 @@ impl Board {
             }
         }
         //Downwards
-        for i in (1..=rank - 1).rev() {
+        for i in (1..rank).rev() {
             let to = Field::new(i, file);
             if self.insert_or_break_loop(color, from, to, &mut v) == BreakLoop::True {
                 break;
@@ -1265,7 +1290,7 @@ impl Board {
             }
         }
         //Left
-        for j in (1..=file - 1).rev() {
+        for j in (1..file).rev() {
             let to = Field::new(rank, j);
             if self.insert_or_break_loop(color, from, to, &mut v) == BreakLoop::True {
                 break;
@@ -1377,15 +1402,15 @@ impl Board {
             .collect();
 
         let captures: Vec<Move> = v
-            .iter()
-            .filter(|&&to| {
+            .into_iter()
+            .filter(|&to| {
                 if let Square::Full(p) = self.at(to.rank, to.file) {
                     p.color == opposite
                 } else {
                     false
                 }
             })
-            .map(|&to| Move::new(from, to, MoveType::Capture))
+            .map(|to| Move::new(from, to, MoveType::Capture))
             .collect();
 
         default_moves.extend(captures);
@@ -1393,7 +1418,7 @@ impl Board {
     }
 
     ///Example: Converts a to 1.
-    fn file_letter_to_number(file: char) -> Result<usize, Error> {
+    const fn file_letter_to_number(file: char) -> Result<usize, Error> {
         match file {
             'a' => Ok(1),
             'b' => Ok(2),
@@ -1570,49 +1595,49 @@ pub struct Piece {
 }
 
 impl Piece {
-    fn pawn(color: PieceColor) -> Self {
+    const fn pawn(color: PieceColor) -> Self {
         Self {
             kind: PieceKind::Pawn,
             color,
         }
     }
 
-    fn bishop(color: PieceColor) -> Self {
+    const fn bishop(color: PieceColor) -> Self {
         Self {
             kind: PieceKind::Bishop,
             color,
         }
     }
 
-    fn knight(color: PieceColor) -> Self {
+    const fn knight(color: PieceColor) -> Self {
         Self {
             kind: PieceKind::Knight,
             color,
         }
     }
 
-    fn rook(color: PieceColor) -> Self {
+    const fn rook(color: PieceColor) -> Self {
         Self {
             kind: PieceKind::Rook,
             color,
         }
     }
 
-    fn queen(color: PieceColor) -> Self {
+    const fn queen(color: PieceColor) -> Self {
         Self {
             kind: PieceKind::Queen,
             color,
         }
     }
 
-    fn king(color: PieceColor) -> Self {
+    const fn king(color: PieceColor) -> Self {
         Self {
             kind: PieceKind::King,
             color,
         }
     }
 
-    fn unicode_str(&self) -> &str {
+    const fn unicode_str(&self) -> &str {
         match self.kind {
             PieceKind::Pawn => "♟︎ ",
             PieceKind::Bishop => "♝ ",
@@ -1640,7 +1665,7 @@ pub enum MoveType {
 }
 
 impl Square {
-    fn unicode_str(&self) -> Option<&str> {
+    const fn unicode_str(&self) -> Option<&str> {
         match self {
             Self::Full(p) => Some(p.unicode_str()),
             Self::Empty => Some(" ⠀"),
@@ -1648,7 +1673,7 @@ impl Square {
         }
     }
 
-    fn color(&self) -> Option<PieceColor> {
+    const fn color(&self) -> Option<PieceColor> {
         match self {
             Self::Full(p) => Some(p.color),
             _ => None,
@@ -1675,7 +1700,7 @@ pub struct Field {
 }
 
 impl Field {
-    fn new(rank: i8, file: i8) -> Self {
+    const fn new(rank: i8, file: i8) -> Self {
         Self { rank, file }
     }
 }
@@ -1698,7 +1723,7 @@ pub enum PieceColor {
 }
 
 impl PieceColor {
-    fn opposite(&self) -> Self {
+    const fn opposite(&self) -> Self {
         match *self {
             Self::Black => Self::White,
             Self::White => Self::Black,
@@ -1726,18 +1751,100 @@ pub enum Error {
     #[error("cannot parse symbol")]
     Parse,
 }
-/*
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    //Tests currently ignore whose turn it is and whether the position is even legal.
+    #[test]
+    fn rook_check() {
+        let b = BoardState::from_fen("3r4/2k3R1/p7/8/8/8/6K1/8 b").unwrap();
+        assert!(b.check(PieceColor::Black));
+    }
 
     #[test]
+    fn knight_check() {
+        let b = BoardState::from_fen("3r4/2k5/p5R1/8/8/4n3/6K1/8 w").unwrap();
+        assert!(b.check(PieceColor::White));
+    }
+
+    #[test]
+    fn knight_no_check() {
+        let b = BoardState::from_fen("3r4/2k5/p5R1/8/8/8/4n1K1/8 w").unwrap();
+        assert!(!b.check(PieceColor::White));
+    }
+
+    #[test]
+    fn bishop_check() {
+        let b = BoardState::from_fen("3r4/2k5/p5R1/8/5B2/8/4n1K1/8 w").unwrap();
+        assert!(b.check(PieceColor::Black));
+    }
+
+    #[test]
+    fn pawn_check() {
+        let b = BoardState::from_fen("3r4/2k5/p5R1/8/8/4B2p/4n1K1/8 w").unwrap();
+        assert!(b.check(PieceColor::White));
+    }
+
+    #[test]
+    fn queen_check() {
+        let b = BoardState::from_fen("3r4/2k3Q1/p5R1/8/8/p3B3/4n1K1/8 b").unwrap();
+        assert!(b.check(PieceColor::Black));
+    }
+
+    #[test]
+    fn back_rank_mate() {
+        let mut b = BoardState::from_fen("1k4Q1/ppp5/8/8/8/8/6K1/8 b").unwrap();
+        assert!(b.check(PieceColor::Black));
+        assert_eq!(b.evaluate(), i32::MAX);
+    }
+
+    #[test]
+    fn mate_in_1_depth_1() {
+        let mut b = BoardState::from_fen("1k6/ppp3Q1/8/8/8/8/6K1/8 w").unwrap();
+        let m = b.minimax(1);
+        assert!(m.1 == i32::MAX);
+        b.make(m.0.unwrap());
+        assert!(b.check(PieceColor::Black));
+        assert_eq!(b.evaluate(), i32::MAX);
+    }
+    //wieso sieht weiss nicht, dass ein move ihm +infty bringt?
+    #[test]
+    fn mate_in_1_depth_2() {
+        let mut b = BoardState::from_fen("1k6/ppp3Q1/8/8/8/8/6K1/8 w").unwrap();
+        let m = b.minimax(2);
+        println!("got {}, {}", m.0.unwrap(), m.1);
+        assert!(m.1 == i32::MAX);
+        b.make(m.0.unwrap());
+        assert!(b.check(PieceColor::Black));
+        assert_eq!(b.evaluate(), i32::MAX);
+    }
+
+    #[test]
+    fn mate_in_1_depth_3() {
+        let mut b = BoardState::from_fen("1k6/ppp3Q1/8/8/8/8/6K1/8 w").unwrap();
+        let m = b.minimax(3);
+        assert!(m.1 == i32::MAX);
+        b.make(m.0.unwrap());
+        assert!(b.check(PieceColor::Black));
+        assert_eq!(b.evaluate(), i32::MAX);
+    }
+
+    #[test]
+    fn bug_move_rook_in_check() {
+        //todo!
+        let mut b =
+            BoardState::from_fen("4k2r/pp3ppp/2p5/4nQ2/1bq5/4P1NP/PPPr1PP1/R3K2R b k").unwrap();
+        let m = b.minimax(3);
+        assert_eq!(m.1, i32::MIN);
+    }
+
+    /*
+    #[test]
     fn white_pawn_take_left() {
-        let b = Board::from_fen("rnbqkbnr/pppp1ppp/8/3p4/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 1");
+        let b = BoardState::from_fen("rnbqkbnr/pppp1ppp/8/3p4/4P3/8/PPPP1PPP/RNBQKBNR w").unwrap();
         eq_fields(
-            b.pseudo_legal_moves(4, 5, MoveType::Attack).unwrap(),
+            b.board.pseudo_legal_moves(Field::new(4, 5)).unwrap(),
             vec![Field::new(5, 4)],
         );
     }
@@ -1908,10 +2015,9 @@ mod tests {
     }
 
     ///Compare v1 and v2, ignoring the order of the fields
-    fn eq_fields(mut v1: Vec<Field>, mut v2: Vec<Field>) {
+    fn eq_fields(mut v1: Vec<Move>, mut v2: Vec<Field>) {
         v1.sort_unstable();
         v2.sort_unstable();
         assert_eq!(v1, v2);
-    }
+    }*/
 }
-*/
