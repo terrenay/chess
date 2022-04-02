@@ -260,8 +260,6 @@ pub fn evaluate(state: &mut BoardState) -> i32 {
 
     let eg_score = eg_white - eg_black;
 
-    //Encourage checkmate by giving a bonus for checking
-
     //it can't be white's turn if black is in check (black would have had to remove
     //the mate threat in the previous turn)
 
@@ -289,4 +287,9 @@ fn no_legal_moves(state: &mut BoardState) -> bool {
         state.unmake();
     }
     true
+}
+
+///Return true if current player has no more moves and is in check
+pub fn checkmate(state: &mut BoardState) -> bool {
+    no_legal_moves(state) && state.checkmate_given_zero_moves(state.turn.opposite())
 }

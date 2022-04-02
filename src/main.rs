@@ -2,6 +2,7 @@
 use chess::*;
 use colored::Colorize;
 use text_io::read;
+mod evaluation;
 
 fn main() {
     let mut b = BoardState::new();
@@ -19,7 +20,7 @@ fn main() {
                 }
                 count += 1;
                 println!("-- WHITE TO MOVE --");
-                let m = b.minimax(6).0;
+                let m = b.minimax(4).0;
                 if m.is_none() {
                     return;
                 }
@@ -28,7 +29,7 @@ fn main() {
                 b.make(m);
                 b.draw(true);
                 println!("-- BLACK TO MOVE --");
-                let m = b.minimax(6).0;
+                let m = b.minimax(1).0;
                 if m.is_none() {
                     return;
                 }
@@ -40,6 +41,10 @@ fn main() {
             //human
             loop {
                 count += 1;
+                if evaluation::checkmate(&mut b) {
+                    println!("You lost. Checkmate for black.");
+                    return;
+                }
                 println!("-- ENTER NEXT MOVE --");
                 println!(
                     "WHITE CURRENTLY IN CHECK: {}",
@@ -53,7 +58,7 @@ fn main() {
                             "BLACK IN CHECK (before black's move): {}",
                             b.check(PieceColor::Black).to_string().red()
                         );
-                        let m = b.minimax(5).0;
+                        let m = b.minimax(6).0;
                         if m.is_none() {
                             return;
                         }

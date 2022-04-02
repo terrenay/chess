@@ -8,72 +8,11 @@ use ndarray::prelude::*;
 
 const STARTING_POSITION: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq";
 
-//Todo: should start to think about organizing this mess into multiple files
-
-//Todo: three separate functions to draw is quite ugly. There must be a better way!
-
-//Todo: user can enter "e2" and it shows possible moves from there
-
-//Todo: -------->> evaluate current board state! <<------
-/*1: piece tables für alle piece in berechnung miteinfliessen lassen (static)
-2: negamax algorithmus!
-3: castling erlauben
-4: pawn promotion erlauben */
-//5: doubled pawns, bishop pair miteinfliessen lassen
-//Todo: kopien von board durch referenzen ersetzen
-
-//next up: multithreading: neuer thread für jeden der ersten moves einer position (als erste idee)
-//wichtigstes feature: pawn promotion
-//danach castling
-//(und previous moves wieder zeichnen!)
-
-//---> todo: white_king position updaten wenn der könig sich bewegt!!! Momentan
-//bleibt er für das programm immer stehen
-
-/*struct AttackMap {
-    map: Array2<bool>,
-}
-
-impl AttackMap {
-    /// <b>Precondition: -1 <= rank, file <= 10
-    fn at(&self, rank: i8, file: i8) -> bool {
-        let (i, j) = Self::to_board(rank, file);
-        self.map[[i, j]]
-    }
-
-    /// <b>Precondition: -1 <= rank, file <= 10
-    fn set(&mut self, rank: i8, file: i8, val: bool) {
-        let (i, j) = Self::to_board(rank, file);
-        self.map[[i, j]] = val;
-    }
-
-    fn new() -> Self {
-        AttackMap {
-            map: Array2::<bool>::default((8, 8)),
-        }
-    }
-
-    ///Not valid for padding squares, since these don't matter for check checks!
-    fn to_board(rank: i8, file: i8) -> (usize, usize) {
-        debug_assert!(rank >= 1 && rank <= 8 && file >= 1 && file <= 8);
-        (9 - rank as usize, file as usize)
-    }
-}*/
-
-///Currently the idea is to have a single instance of `BoardState` that is then modified.
-/// The other option would be to clone it each ply, but that seems like a waste of
-/// resources.
-///
-/// For multithreading, I could later clone the `BoardState` at some node and have each
-/// thread modify its own copy downwards.
 pub struct BoardState {
     pub board: Board,
-    turn: PieceColor,
+    pub turn: PieceColor,
     ply: u16,
-    white_queen_castle_lost_ply: Option<u16>,
-    black_queen_castle_lost_ply: Option<u16>,
-    white_king_castle_lost_ply: Option<u16>,
-    black_king_castle_lost_ply: Option<u16>,
+    castling_rights: CastlingRights,
 
     //en_passant: Option<Field>,
     moves: Vec<Move>,
@@ -92,8 +31,6 @@ impl BoardState {
     pub fn evaluate(&mut self) -> i32 {
         evaluation::evaluate(self)
     }
-
-    //Vielleicht muss ich in der root node überprüfen, ob ich aktuell in schach stehe!
 
     ///Assumes root has color state.turn
     pub fn minimax(&mut self, depth: i32) -> (Option<Move>, i32) {
@@ -450,19 +387,23 @@ impl BoardState {
         println!("Ply: {:?}", self.ply);
         println!(
             "White king: {:?}",
-            self.white_king_castle_lost_ply.unwrap_or(0)
+            self.castling_rights.white_king_castle_lost_ply.unwrap_or(0)
         );
         println!(
             "White queen: {:?}",
-            self.white_queen_castle_lost_ply.unwrap_or(0)
+            self.castling_rights
+                .white_queen_castle_lost_ply
+                .unwrap_or(0)
         );
         println!(
             "Black king: {:?}",
-            self.black_king_castle_lost_ply.unwrap_or(0)
+            self.castling_rights.black_king_castle_lost_ply.unwrap_or(0)
         );
         println!(
             "Black queen: {:?}",
-            self.black_queen_castle_lost_ply.unwrap_or(0)
+            self.castling_rights
+                .black_queen_castle_lost_ply
+                .unwrap_or(0)
         );
         //println!("En passant square: {:?}", self.en_passant);
 
@@ -546,12 +487,20 @@ impl BoardState {
                 PieceKind::King => {
                     if moving_piece.color == PieceColor::White {
                         self.board.white_king = Field::new(m.to.rank, m.to.file);
-                        self.white_king_castle_lost_ply.get_or_insert(self.ply);
-                        self.white_queen_castle_lost_ply.get_or_insert(self.ply);
+                        self.castling_rights
+                            .white_king_castle_lost_ply
+                            .get_or_insert(self.ply);
+                        self.castling_rights
+                            .white_queen_castle_lost_ply
+                            .get_or_insert(self.ply);
                     } else {
                         self.board.black_king = Field::new(m.to.rank, m.to.file);
-                        self.black_king_castle_lost_ply.get_or_insert(self.ply);
-                        self.black_queen_castle_lost_ply.get_or_insert(self.ply);
+                        self.castling_rights
+                            .black_king_castle_lost_ply
+                            .get_or_insert(self.ply);
+                        self.castling_rights
+                            .black_queen_castle_lost_ply
+                            .get_or_insert(self.ply);
                     }
                 }
                 PieceKind::Rook => {
@@ -559,16 +508,24 @@ impl BoardState {
                     //legal, so if it is from a1, it must be white's move.
                     if m.from == Field::new(1, 1) {
                         //white queen-side
-                        self.white_queen_castle_lost_ply.get_or_insert(self.ply);
+                        self.castling_rights
+                            .white_queen_castle_lost_ply
+                            .get_or_insert(self.ply);
                     } else if m.from == Field::new(1, 8) {
                         //white king-side
-                        self.white_king_castle_lost_ply.get_or_insert(self.ply);
+                        self.castling_rights
+                            .white_king_castle_lost_ply
+                            .get_or_insert(self.ply);
                     } else if m.from == Field::new(8, 1) {
                         //black queen-side
-                        self.black_queen_castle_lost_ply.get_or_insert(self.ply);
+                        self.castling_rights
+                            .black_queen_castle_lost_ply
+                            .get_or_insert(self.ply);
                     } else if m.from == Field::new(8, 8) {
                         //black king-side
-                        self.black_king_castle_lost_ply.get_or_insert(self.ply);
+                        self.castling_rights
+                            .black_king_castle_lost_ply
+                            .get_or_insert(self.ply);
                     }
                 }
                 _ => (),
@@ -595,7 +552,7 @@ impl BoardState {
     }
 
     ///Unmakes the last move (the one at the end of the moves vec)
-    fn unmake(&mut self) {
+    pub fn unmake(&mut self) {
         //println!("unmake start");
         self.turn = self.turn.opposite();
         self.ply -= 1;
@@ -666,24 +623,24 @@ impl BoardState {
                 }
 
                 //Restore the castling rights which apply
-                if let Some(castle_ply) = self.white_king_castle_lost_ply {
+                if let Some(castle_ply) = self.castling_rights.white_king_castle_lost_ply {
                     if self.ply == castle_ply {
-                        self.white_king_castle_lost_ply = None;
+                        self.castling_rights.white_king_castle_lost_ply = None;
                     }
                 }
-                if let Some(castle_ply) = self.white_queen_castle_lost_ply {
+                if let Some(castle_ply) = self.castling_rights.white_queen_castle_lost_ply {
                     if self.ply == castle_ply {
-                        self.white_queen_castle_lost_ply = None;
+                        self.castling_rights.white_queen_castle_lost_ply = None;
                     }
                 }
-                if let Some(castle_ply) = self.black_king_castle_lost_ply {
+                if let Some(castle_ply) = self.castling_rights.black_king_castle_lost_ply {
                     if self.ply == castle_ply {
-                        self.black_king_castle_lost_ply = None;
+                        self.castling_rights.black_king_castle_lost_ply = None;
                     }
                 }
-                if let Some(castle_ply) = self.black_queen_castle_lost_ply {
+                if let Some(castle_ply) = self.castling_rights.black_queen_castle_lost_ply {
                     if self.ply == castle_ply {
-                        self.black_queen_castle_lost_ply = None;
+                        self.castling_rights.black_queen_castle_lost_ply = None;
                     }
                 }
             } else {
@@ -754,7 +711,7 @@ impl BoardState {
     }
 
     ///<b>Precondition: zero legal moves for winning_color.opposite()</b>
-    fn checkmate_given_zero_moves(&self, winning_color: PieceColor) -> bool {
+    pub fn checkmate_given_zero_moves(&self, winning_color: PieceColor) -> bool {
         self.check(winning_color.opposite())
     }
 
@@ -764,7 +721,7 @@ impl BoardState {
         //Check cheap conditions (empty, castling rights) first, then expensive (threatened)
 
         if self.turn == PieceColor::White {
-            if self.white_king_castle_lost_ply.is_none()
+            if self.castling_rights.white_king_castle_lost_ply.is_none()
                 && self.board.empty(1, 6)
                 && self.board.empty(1, 7)
                 && !self.check(self.turn)
@@ -777,7 +734,7 @@ impl BoardState {
                     MoveType::CastleKingside,
                 ));
             }
-            if self.white_queen_castle_lost_ply.is_none()
+            if self.castling_rights.white_queen_castle_lost_ply.is_none()
                 && self.board.empty(1, 4)
                 && self.board.empty(1, 3)
                 && self.board.empty(1, 2)
@@ -793,7 +750,7 @@ impl BoardState {
             }
         } else {
             //Black's turn
-            if self.black_king_castle_lost_ply.is_none()
+            if self.castling_rights.black_king_castle_lost_ply.is_none()
                 && self.board.empty(8, 6)
                 && self.board.empty(8, 7)
                 && !self.check(self.turn)
@@ -806,7 +763,7 @@ impl BoardState {
                     MoveType::CastleKingside,
                 ));
             }
-            if self.black_queen_castle_lost_ply.is_none()
+            if self.castling_rights.black_queen_castle_lost_ply.is_none()
                 && self.board.empty(8, 4)
                 && self.board.empty(8, 3)
                 && self.board.empty(8, 2)
@@ -870,27 +827,24 @@ impl BoardState {
         println!();
     }
 
-    fn from_fen(fen: &str) -> Result<BoardState, Error> {
+    ///Consumes one trailing whitespace, if any.
+    fn parse_board_fen(chars: &mut std::str::Chars) -> Result<Board, Error> {
         let mut board = Array2::<Square>::default((12, 12));
         let mut rank = 8;
         let mut file = 1;
         let mut black_king = None;
         let mut white_king = None;
-        let chars = &mut fen.chars();
-
-        //Field 1
 
         //Padding around the board
         for i in 0..12 {
             for j in 0..12 {
-                //better according to clippy
-                if !(2..=9).contains(&i) {
-                    board[[i, j]] = Square::Padding;
-                } else {
+                if (2..=9).contains(&i) {
                     board[[i, 0]] = Square::Padding;
                     board[[i, 1]] = Square::Padding;
                     board[[i, 10]] = Square::Padding;
                     board[[i, 11]] = Square::Padding;
+                } else {
+                    board[[i, j]] = Square::Padding;
                 }
             }
         }
@@ -901,6 +855,7 @@ impl BoardState {
                 file += num as i8;
                 continue;
             }
+
             match c {
                 '/' => {
                     rank -= 1;
@@ -926,19 +881,24 @@ impl BoardState {
                     white_king = Some(Field::new(rank, file));
                 }
                 ' ' => break,
-                _ => (),
+                _ => return Err(Error::Parse),
+            }
+            if rank < 1 || rank > 8 || file < 1 || file > 8 {
+                println!("rank={}, file={}", rank, file);
+                return Err(Error::Parse);
             }
             file += 1;
         }
 
-        let board = Board {
+        Ok(Board {
             board,
-            white_king: white_king.unwrap(),
-            black_king: black_king.unwrap(),
-        };
+            white_king: white_king.ok_or(Error::Parse)?,
+            black_king: black_king.ok_or(Error::Parse)?,
+        })
+    }
 
-        //Default turn is white
-
+    ///Leave trailing whitespaces as they are
+    fn parse_turn_fen(chars: &mut std::str::Chars) -> Result<PieceColor, Error> {
         let mut turn = PieceColor::White;
 
         if let Some(c) = chars.by_ref().next() {
@@ -948,56 +908,82 @@ impl BoardState {
                 _ => return Err(Error::Parse),
             }
         };
+        Ok(turn)
+    }
+
+    fn from_fen(fen: &str) -> Result<BoardState, Error> {
+        let chars = &mut fen.chars();
+
+        let board = Self::parse_board_fen(chars)?;
+
+        let turn = Self::parse_turn_fen(chars)?;
 
         chars.by_ref().next(); //Consume the whitespace if it's there
 
-        //Castling rights
-        //Default: No castling rights.
+        let castling_rights = parse_castling_rights_fen(chars, &board)?;
 
-        let mut white_queen_castle_lost_ply = Some(0);
-        let mut black_queen_castle_lost_ply = Some(0);
-        let mut white_king_castle_lost_ply = Some(0);
-        let mut black_king_castle_lost_ply = Some(0);
-
-        for c in chars.by_ref() {
-            match c {
-                'K' => {
-                    assert!(white_king.unwrap() == Field::new(1, 5));
-                    assert!(board.piece_at(Field::new(1, 8), Piece::rook(PieceColor::White)));
-                    white_king_castle_lost_ply = None
-                }
-                'Q' => {
-                    assert!(white_king.unwrap() == Field::new(1, 5));
-                    assert!(board.piece_at(Field::new(1, 1), Piece::rook(PieceColor::White)));
-                    white_queen_castle_lost_ply = None
-                }
-                'k' => {
-                    assert!(black_king.unwrap() == Field::new(8, 5));
-                    assert!(board.piece_at(Field::new(8, 8), Piece::rook(PieceColor::Black)));
-                    black_king_castle_lost_ply = None
-                }
-                'q' => {
-                    assert!(black_king.unwrap() == Field::new(8, 5));
-                    assert!(board.piece_at(Field::new(8, 1), Piece::rook(PieceColor::Black)));
-                    black_queen_castle_lost_ply = None
-                }
-                ' ' => break,
-                _ => return Err(Error::Parse),
-            }
-        }
-
-        Ok(BoardState {
+        Ok(Self {
             board,
             turn,
             ply: 1,
-            white_queen_castle_lost_ply,
-            black_queen_castle_lost_ply,
-            white_king_castle_lost_ply,
-            black_king_castle_lost_ply,
+            castling_rights,
             moves: vec![],
             taken: vec![],
         })
     }
+}
+
+///Consumes trailing whitespace, if any.
+fn parse_castling_rights_fen(
+    chars: &mut std::str::Chars,
+    board: &Board,
+) -> Result<CastlingRights, Error> {
+    let mut white_queen_castle_lost_ply = Some(0);
+    let mut black_queen_castle_lost_ply = Some(0);
+    let mut white_king_castle_lost_ply = Some(0);
+    let mut black_king_castle_lost_ply = Some(0);
+    let white_king = board.white_king;
+    let black_king = board.black_king;
+
+    for c in chars.by_ref() {
+        match c {
+            'K' => {
+                assert!(white_king == Field::new(1, 5));
+                assert!(board.piece_at(Field::new(1, 8), Piece::rook(PieceColor::White)));
+                white_king_castle_lost_ply = None;
+            }
+            'Q' => {
+                assert!(white_king == Field::new(1, 5));
+                assert!(board.piece_at(Field::new(1, 1), Piece::rook(PieceColor::White)));
+                white_queen_castle_lost_ply = None;
+            }
+            'k' => {
+                assert!(black_king == Field::new(8, 5));
+                assert!(board.piece_at(Field::new(8, 8), Piece::rook(PieceColor::Black)));
+                black_king_castle_lost_ply = None;
+            }
+            'q' => {
+                assert!(black_king == Field::new(8, 5));
+                assert!(board.piece_at(Field::new(8, 1), Piece::rook(PieceColor::Black)));
+                black_queen_castle_lost_ply = None;
+            }
+            ' ' => break,
+            _ => return Err(Error::Parse),
+        }
+    }
+    Ok(CastlingRights {
+        white_queen_castle_lost_ply,
+        black_queen_castle_lost_ply,
+        white_king_castle_lost_ply,
+        black_king_castle_lost_ply,
+    })
+}
+
+struct CastlingRights {
+    white_queen_castle_lost_ply: Option<u16>,
+    black_queen_castle_lost_ply: Option<u16>,
+    white_king_castle_lost_ply: Option<u16>,
+    black_king_castle_lost_ply: Option<u16>,
 }
 
 impl Default for BoardState {
@@ -1056,7 +1042,7 @@ impl Board {
     /// would be padding rows, but rank -2 would panic.
     ///
     /// <b>Precondition: -1 <= rank, file <= 10
-    fn at(&self, rank: i8, file: i8) -> Square {
+    pub fn at(&self, rank: i8, file: i8) -> Square {
         let (i, j) = Board::to_board(rank, file);
         self.board[[i, j]]
     }
@@ -1088,6 +1074,12 @@ impl Board {
     }
 
     fn pseudo_legal_pawn_moves(&self, color: PieceColor, from: Field) -> Vec<Move> {
+        //todo!("split into smaller function");
+
+        //beginning of function: check color once, initialize all offsets depending on it.
+        //then use all the code that is duplicated for black and white here only
+        //once, but with the corresponding offset.
+
         let Field { rank, file } = from;
         match color {
             PieceColor::Black => {
@@ -1489,121 +1481,10 @@ impl Board {
         }
         false
     }
-
-    /*
-    pub fn draw_pseudo_legal_moves(&self, pos_rank: i8, pos_file: i8) {
-        let v = self.pseudo_legal_moves(pos_rank, pos_file).unwrap();
-        for rank in (1..9).rev() {
-            print!("{}", rank);
-            for file in 1..9 {
-                let square = self.at(rank, file);
-                let tile = match square.unicode_str() {
-                    Some(s) => s,
-                    None => continue,
-                };
-
-                let tile = if (rank + file) % 2 == 0 {
-                    tile.on_truecolor(158, 93, 30) //black
-                } else {
-                    tile.on_truecolor(155, 120, 70) //white
-                };
-
-                let tile = if v.contains(&Move::new(
-                    Field::new(pos_rank, pos_file),
-                    Field::new(rank, file),
-                )) {
-                    tile.on_truecolor(255, 0, 0)
-                } else {
-                    tile
-                };
-
-                let tile = match square.color() {
-                    Some(color) => match color {
-                        PieceColor::Black => tile.black(),
-                        PieceColor::White => tile.white(),
-                    },
-                    None => tile,
-                };
-
-                print!("{}", tile);
-            }
-            println!();
-        }
-        for i in 1..=8 {
-            print!(" {}", Board::number_to_file_letter(i));
-        }
-        println!();
-    }*/
-    /*
-    pub fn draw_pseudo_legal_moves_and_prev_move(
-        &self,
-        from_rank: i8,
-        from_file: i8,
-        to_rank: i8,
-        to_file: i8,
-        move_type: MoveType,
-    ) {
-        let v = self
-            .pseudo_legal_moves(to_rank, to_file, move_type)
-            .unwrap();
-        for rank in (1..9).rev() {
-            print!("{}", rank);
-            for file in 1..9 {
-                let square = self.at(rank, file);
-                let tile = match square.unicode_str() {
-                    Some(s) => s,
-                    None => continue,
-                };
-
-                let tile = if (rank + file) % 2 == 0 {
-                    tile.on_truecolor(158, 93, 30) //black
-                } else {
-                    tile.on_truecolor(155, 120, 70) //white
-                };
-
-                let tile = if (rank == from_rank && file == from_file)
-                    || (rank == to_rank && file == to_file)
-                {
-                    tile.on_truecolor(0, 0, 255)
-                } else {
-                    tile
-                };
-
-                let tile = if v.contains(&Move::new(
-                    Field::new(from_rank, from_file),
-                    Field::new(rank, file),
-                    MoveType::DefaultOrAttack,
-                )) {
-                    if rank == from_rank && file == from_file {
-                        tile.on_truecolor(150, 0, 150)
-                    } else {
-                        tile.on_truecolor(255, 0, 0)
-                    }
-                } else {
-                    tile
-                };
-
-                let tile = match square.color() {
-                    Some(color) => match color {
-                        PieceColor::Black => tile.black(),
-                        PieceColor::White => tile.white(),
-                    },
-                    None => tile,
-                };
-
-                print!("{}", tile);
-            }
-            println!();
-        }
-        for i in 1..=8 {
-            print!(" {}", Board::number_to_file_letter(i));
-        }
-        println!();
-    }*/
 }
 
 #[derive(Eq, PartialEq, Clone, Copy, Debug)]
-enum PieceKind {
+pub enum PieceKind {
     Pawn,
     Bishop,
     Knight,
@@ -1614,8 +1495,8 @@ enum PieceKind {
 
 #[derive(Eq, PartialEq, Clone, Copy, Debug)]
 pub struct Piece {
-    kind: PieceKind,
-    color: PieceColor,
+    pub kind: PieceKind,
+    pub color: PieceColor,
 }
 
 impl Piece {
@@ -1747,7 +1628,7 @@ pub enum PieceColor {
 }
 
 impl PieceColor {
-    const fn opposite(&self) -> Self {
+    pub const fn opposite(&self) -> Self {
         match *self {
             Self::Black => Self::White,
             Self::White => Self::Black,
@@ -1854,184 +1735,177 @@ mod tests {
         assert_eq!(b.evaluate(), i32::MAX);
     }
 
-    //This takes a long time, disable if not needed
     #[test]
-    fn mate_in_5_depth_5() {
-        let mut b = BoardState::from_fen("r5k1/1bp3pp/rp6/3N4/4P3/P4R2/6PP/5RK1 w").unwrap();
+    fn mate_in_3_endgame() {
+        let mut b = BoardState::from_fen("7R/2N1P3/8/8/8/8/k6K/8 w").unwrap();
         let m = b.minimax(5);
         assert!(m.1 == i32::MAX);
     }
 
+    //This takes a long time, disable if not needed
+    #[test]
+    /*fn mate_in_3_depth_5() {
+        let mut b = BoardState::from_fen("r5k1/1bp3pp/rp6/3N4/4P3/P4R2/6PP/5RK1 w").unwrap();
+        let m = b.minimax(5);
+        assert!(m.1 == i32::MAX);
+    }*/
     #[test]
     #[should_panic]
     fn castling_rights_in_fen_but_impossible() {
         BoardState::from_fen("rnbqkbnr/pp1p3p/2p3p1/4pp2/8/4PN2/PPPPBPPP/RNBQ1RK1 w KQkq").unwrap();
     }
 
-    /*
     #[test]
     fn white_pawn_take_left() {
         let b = BoardState::from_fen("rnbqkbnr/pppp1ppp/8/3p4/4P3/8/PPPP1PPP/RNBQKBNR w").unwrap();
         eq_fields(
             b.board.pseudo_legal_moves(Field::new(4, 5)).unwrap(),
-            vec![Field::new(5, 4)],
+            vec![Field::new(5, 4), Field::new(5, 5)],
         );
     }
 
     #[test]
     fn white_pawn_not_take_center() {
-        let b = Board::from_fen("rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 1");
+        let b = BoardState::from_fen("rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w").unwrap();
         eq_fields(
-            b.pseudo_legal_moves(4, 5, MoveType::Attack).unwrap(),
+            b.board.pseudo_legal_moves(Field::new(4, 5)).unwrap(),
             vec![],
         );
     }
 
     #[test]
     fn white_pawn_take_right() {
-        let b = Board::from_fen("rnbqkbnr/pppp1ppp/8/5p2/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 1");
+        let b = BoardState::from_fen("rnbqkbnr/pppp1ppp/8/5p2/4P3/8/PPPP1PPP/RNBQKBNR w").unwrap();
         eq_fields(
-            b.pseudo_legal_moves(4, 5, MoveType::Attack).unwrap(),
-            vec![Field::new(5, 6)],
+            b.board.pseudo_legal_moves(Field::new(4, 5)).unwrap(),
+            vec![Field::new(5, 6), Field::new(5, 5)],
         );
     }
 
     #[test]
     fn black_pawn_take_left() {
-        let b = Board::from_fen("rnbqkbnr/pppp1ppp/8/4p3/3P4/8/PPP1PPPP/RNBQKBNR w KQkq - 0 1");
+        let b = BoardState::from_fen("rnbqkbnr/pppp1ppp/8/4p3/3P4/8/PPP1PPPP/RNBQKBNR b").unwrap();
         eq_fields(
-            b.pseudo_legal_moves(5, 5, MoveType::Attack).unwrap(),
-            vec![Field::new(4, 4)],
+            b.board.pseudo_legal_moves(Field::new(5, 5)).unwrap(),
+            vec![Field::new(4, 4), Field::new(4, 5)],
         );
     }
 
     #[test]
     fn black_pawn_not_take_center() {
-        let b = Board::from_fen("rnbqkbnr/ppp1pppp/8/3p4/3P4/8/PPP1PPPP/RNBQKBNR w KQkq - 0 1");
+        let b = BoardState::from_fen("rnbqkbnr/ppp1pppp/8/3p4/3P4/8/PPP1PPPP/RNBQKBNR b").unwrap();
         eq_fields(
-            b.pseudo_legal_moves(5, 4, MoveType::Attack).unwrap(),
+            b.board.pseudo_legal_moves(Field::new(5, 4)).unwrap(),
             vec![],
         );
     }
 
     #[test]
     fn black_pawn_take_right() {
-        let b = Board::from_fen("rnbqkbnr/ppp1pppp/8/3p4/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 1");
+        let b = BoardState::from_fen("rnbqkbnr/ppp1pppp/8/3p4/4P3/8/PPPP1PPP/RNBQKBNR b").unwrap();
         eq_fields(
-            b.pseudo_legal_moves(5, 4, MoveType::Attack).unwrap(),
-            vec![Field::new(4, 5)],
+            b.board.pseudo_legal_moves(Field::new(5, 4)).unwrap(),
+            vec![Field::new(4, 4), Field::new(4, 5)],
         );
     }
 
     #[test]
     fn white_pawn_double_push() {
-        let b = Board::new();
+        let b = BoardState::new();
         eq_fields(
-            b.pseudo_legal_moves(2, 1, MoveType::Default).unwrap(),
+            b.board.pseudo_legal_moves(Field::new(2, 1)).unwrap(),
             vec![Field::new(3, 1), Field::new(4, 1)],
         );
     }
 
     #[test]
     fn black_pawn_double_push() {
-        let b = Board::new();
+        let b = BoardState::new();
         eq_fields(
-            b.pseudo_legal_moves(7, 1, MoveType::Default).unwrap(),
+            b.board.pseudo_legal_moves(Field::new(7, 1)).unwrap(),
             vec![Field::new(6, 1), Field::new(5, 1)],
         );
     }
 
     #[test]
     fn white_pawn_double_push_blocked() {
-        let b = Board::from_fen("rnbqkbnr/1ppppppp/8/8/p7/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+        let b =
+            BoardState::from_fen("rnbqkbnr/1ppppppp/8/8/p7/8/PPPPPPPP/RNBQKBNR w KQkq").unwrap();
         eq_fields(
-            b.pseudo_legal_moves(2, 1, MoveType::Default).unwrap(),
+            b.board.pseudo_legal_moves(Field::new(2, 1)).unwrap(),
             vec![Field::new(3, 1)],
         );
     }
 
     #[test]
     fn black_pawn_double_push_blocked() {
-        let b = Board::from_fen("rnbqkbnr/pppppppp/8/P7/8/8/1PPPPPPP/RNBQKBNR w KQkq - 0 1");
+        let b = BoardState::from_fen("rnbqkbnr/pppppppp/8/P7/8/8/1PPPPPPP/RNBQKBNR w").unwrap();
         eq_fields(
-            b.pseudo_legal_moves(7, 1, MoveType::Default).unwrap(),
+            b.board.pseudo_legal_moves(Field::new(7, 1)).unwrap(),
             vec![Field::new(6, 1)],
         );
     }
 
     #[test]
     fn white_pawn_not_take_white_pawn() {
-        let b = Board::from_fen("rnbqkbnr/pppppppp/8/8/8/4P3/PPPP1PPP/RNBQKBNR w KQkq - 0 1");
+        let b =
+            BoardState::from_fen("rnbqkbnr/pppppppp/8/8/8/4P3/PPPP1PPP/RNBQKBNR w KQkq").unwrap();
         eq_fields(
-            b.pseudo_legal_moves(2, 4, MoveType::Attack).unwrap(),
-            vec![],
+            b.board.pseudo_legal_moves(Field::new(2, 4)).unwrap(),
+            vec![Field::new(3, 4), Field::new(4, 4)],
         );
     }
 
     #[test]
     fn white_knight_takes() {
-        let b = Board::from_fen("rnbqkbnr/pp1ppppp/8/8/8/2p5/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+        let b = BoardState::from_fen("rnbqkbnr/pp1ppppp/8/8/8/2p5/PPPPPPPP/RNBQKBNR w").unwrap();
         eq_fields(
-            b.pseudo_legal_moves(1, 2, MoveType::Attack).unwrap(),
+            b.board.pseudo_legal_moves(Field::new(1, 2)).unwrap(),
             vec![Field::new(3, 1), Field::new(3, 3)],
         );
     }
 
     #[test]
     fn black_knight_corner_blocked() {
-        let b = Board::from_fen("n7/2p5/1p6/8/8/8/8/8 w - - 0 1");
+        let b = BoardState::from_fen("n7/2p3k1/1p6/8/8/4K3/8/8 w").unwrap();
         eq_fields(
-            b.pseudo_legal_moves(8, 1, MoveType::Attack).unwrap(),
+            b.board.pseudo_legal_moves(Field::new(8, 1)).unwrap(),
             vec![],
         );
     }
 
     #[test]
     fn black_knight_corner_takes() {
-        let b = Board::from_fen("n7/2p5/1P6/8/8/8/8/8 w - - 0 1");
+        let b = BoardState::from_fen("n7/2p3k1/1P6/8/8/4K3/8/8 w").unwrap();
         eq_fields(
-            b.pseudo_legal_moves(8, 1, MoveType::Attack).unwrap(),
+            b.board.pseudo_legal_moves(Field::new(8, 1)).unwrap(),
             vec![Field::new(6, 2)],
         );
     }
 
     #[test]
     fn black_knight_edge_takes() {
-        let b = Board::from_fen("8/5p2/7n/8/6P1/8/8/8 w - - 0 1");
+        let b = BoardState::from_fen("8/1k3p2/7n/8/6P1/8/2K5/8 w").unwrap();
         eq_fields(
-            b.pseudo_legal_moves(6, 8, MoveType::Attack).unwrap(),
+            b.board.pseudo_legal_moves(Field::new(6, 8)).unwrap(),
             vec![Field::new(8, 7), Field::new(5, 6), Field::new(4, 7)],
         );
     }
 
     #[test]
     fn black_knight_edge_blocked() {
-        let b = Board::from_fen("6p1/5p2/7n/5p2/6p1/8/8/8 w - - 0 1");
+        let b = BoardState::from_fen("6p1/1k3p2/7n/5p2/6p1/8/1K6/8 w").unwrap();
         eq_fields(
-            b.pseudo_legal_moves(6, 8, MoveType::Attack).unwrap(),
+            b.board.pseudo_legal_moves(Field::new(6, 8)).unwrap(),
             vec![],
         );
     }
 
     #[test]
-    fn white_bishop_default_partially_blocked() {
-        let b = Board::from_fen("8/8/8/4R3/1p6/2B5/8/p7 w - - 0 1");
-        eq_fields(
-            b.pseudo_legal_moves(3, 3, MoveType::Default).unwrap(),
-            vec![
-                Field::new(2, 2),
-                Field::new(4, 4),
-                Field::new(2, 4),
-                Field::new(1, 5),
-            ],
-        );
-    }
-
-    #[test]
     fn white_bishop_attack_partially_blocked() {
-        let b = Board::from_fen("8/8/8/4R3/1p6/2B5/8/p7 w - - 0 1");
+        let b = BoardState::from_fen("8/8/8/4R3/1p6/2B4k/8/p6K w").unwrap();
         eq_fields(
-            b.pseudo_legal_moves(3, 3, MoveType::Attack).unwrap(),
+            b.board.pseudo_legal_moves(Field::new(3, 3)).unwrap(),
             vec![
                 Field::new(2, 2),
                 Field::new(4, 4),
@@ -2044,9 +1918,10 @@ mod tests {
     }
 
     ///Compare v1 and v2, ignoring the order of the fields
-    fn eq_fields(mut v1: Vec<Move>, mut v2: Vec<Field>) {
-        v1.sort_unstable();
+    fn eq_fields(v1: Vec<Move>, mut v2: Vec<Field>) {
+        let mut fields: Vec<Field> = v1.into_iter().map(|m| m.to).collect();
+        fields.sort_unstable();
         v2.sort_unstable();
-        assert_eq!(v1, v2);
-    }*/
+        assert_eq!(fields, v2);
+    }
 }
