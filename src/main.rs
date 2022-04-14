@@ -3,6 +3,7 @@ use chess::*;
 use colored::Colorize;
 use text_io::read;
 mod evaluation;
+mod zobrist;
 
 fn main() {
     let mut b = BoardState::new();
@@ -10,6 +11,8 @@ fn main() {
     let mut count = 0;
     println!("e: egine, h: play");
     let game_mode: String = read!();
+    let zobrist = zobrist::ZobristState::from_board_state(&b);
+    println!("{}", zobrist.hash);
     match game_mode.as_str() {
         "e" => {
             //engine
@@ -29,7 +32,7 @@ fn main() {
                 b.make(m);
                 b.draw(true);
                 println!("-- BLACK TO MOVE --");
-                let m = b.minimax(1).0;
+                let m = b.minimax(4).0;
                 if m.is_none() {
                     return;
                 }
@@ -53,17 +56,25 @@ fn main() {
                 let input: String = read!();
                 match b.move_by_str(input.as_str()) {
                     Ok(()) => {
+                        println!(
+                            "Hash after white's move: {}",
+                            zobrist::ZobristState::from_board_state(&b).hash
+                        );
                         println!("Please let me think :)");
                         println!(
                             "BLACK IN CHECK (before black's move): {}",
                             b.check(PieceColor::Black).to_string().red()
                         );
-                        let m = b.minimax(6).0;
+                        let m = b.minimax(5).0;
                         if m.is_none() {
                             return;
                         }
                         b.make(m.unwrap());
                         b.draw(true);
+                        println!(
+                            "Hash after black's move: {}",
+                            zobrist::ZobristState::from_board_state(&b).hash
+                        );
                     }
                     Err(e) => eprintln!("{}", e.to_string().red()),
                 }

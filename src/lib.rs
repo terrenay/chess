@@ -1,5 +1,6 @@
 //#![warn(clippy::all, clippy::pedantic, clippy::nursery, clippy::cargo)]
 mod evaluation;
+mod zobrist;
 
 use std::fmt::{self, Display};
 
@@ -12,12 +13,11 @@ pub struct BoardState {
     pub board: Board,
     pub turn: PieceColor,
     ply: u16,
-    castling_rights: CastlingRights,
+    pub castling_rights: CastlingRights,
 
     //en_passant: Option<Field>,
     moves: Vec<Move>,
     taken: Vec<Piece>,
-    //white_attack_map: AttackMap, //vlt array2<vec<uniquepiece>> schlussendlich
 }
 
 impl BoardState {
@@ -315,7 +315,6 @@ impl BoardState {
     }*/
 
     ///Move piece by string like "e2e4". Checks for pseudo-legality.
-    #[allow(clippy::needless_return)]
     pub fn move_by_str(&mut self, arg: &str) -> Result<(), Error> {
         println!("\nTry to process input: {}", arg);
 
@@ -373,7 +372,7 @@ impl BoardState {
             }
             Ok(())
         } else {
-            return Err(Error::BadMoveTarget(Field::new(to_rank, to_file)));
+            Err(Error::BadMoveTarget(Field::new(to_rank, to_file)))
         }
     }
 
@@ -979,11 +978,11 @@ fn parse_castling_rights_fen(
     })
 }
 
-struct CastlingRights {
-    white_queen_castle_lost_ply: Option<u16>,
-    black_queen_castle_lost_ply: Option<u16>,
-    white_king_castle_lost_ply: Option<u16>,
-    black_king_castle_lost_ply: Option<u16>,
+pub struct CastlingRights {
+    pub white_queen_castle_lost_ply: Option<u16>,
+    pub black_queen_castle_lost_ply: Option<u16>,
+    pub white_king_castle_lost_ply: Option<u16>,
+    pub black_king_castle_lost_ply: Option<u16>,
 }
 
 impl Default for BoardState {
@@ -1012,14 +1011,13 @@ impl Move {
         }
     }
 
-    ///Generate a new promotion move.
-    /// To use only for pawns!
-    const fn promotion(from: Field, to: Field, move_type: MoveType, p: Piece) -> Self {
+    ///Generate a new move which may be a promotion (or not).
+    const fn promotion(from: Field, to: Field, move_type: MoveType, promo: Option<Piece>) -> Self {
         Move {
             from,
             to,
             move_type,
-            promotion: Some(p),
+            promotion: promo,
         }
     }
 }
@@ -1074,173 +1072,91 @@ impl Board {
     }
 
     fn pseudo_legal_pawn_moves(&self, color: PieceColor, from: Field) -> Vec<Move> {
-        //todo!("split into smaller function");
-
-        //beginning of function: check color once, initialize all offsets depending on it.
-        //then use all the code that is duplicated for black and white here only
-        //once, but with the corresponding offset.
-
         let Field { rank, file } = from;
+        let starting_rank;
+        let promotion_rank;
+        let move_offset;
+        let opposite_color = color.opposite();
+
         match color {
-            PieceColor::Black => {
-                let mut v = match self.at(rank - 1, file) {
-                    Square::Empty => {
-                        let mut v = vec![];
-                        if rank == 2 {
-                            v.push(Move::promotion(
-                                from,
-                                Field::new(rank - 1, file),
-                                MoveType::Default,
-                                Piece::queen(PieceColor::Black),
-                            ));
-                        } else {
-                            //Exclusive else because you may not push a pawn to the last
-                            //rank without promoting it.
-                            v.push(Move::new(
-                                from,
-                                Field::new(rank - 1, file),
-                                MoveType::Default,
-                            ));
-                        }
-
-                        //Can never be a promotion move
-                        if rank == 7 {
-                            //Double push
-                            if let Square::Empty = self.at(rank - 2, file) {
-                                v.push(Move::new(
-                                    from,
-                                    Field::new(rank - 2, file),
-                                    MoveType::Default,
-                                ));
-                            }
-                        }
-                        v
-                    }
-                    _ => vec![],
-                };
-                //Black pawn attacks down to the left
-                //Remember this could also be a promotion move.
-                match self.at(rank - 1, file - 1) {
-                    Square::Full(p) if matches!(p.color, PieceColor::White) => {
-                        if rank == 2 {
-                            v.push(Move::promotion(
-                                from,
-                                Field::new(rank - 1, file - 1),
-                                MoveType::Capture,
-                                Piece::queen(PieceColor::Black),
-                            ));
-                        } else {
-                            v.push(Move::new(
-                                from,
-                                Field::new(rank - 1, file - 1),
-                                MoveType::Capture,
-                            ));
-                        }
-                    }
-                    _ => (),
-                }
-
-                //Black pawn attacks down to the right
-                match self.at(rank - 1, file + 1) {
-                    //Right attack
-                    Square::Full(p) if matches!(p.color, PieceColor::White) => {
-                        if rank == 2 {
-                            v.push(Move::promotion(
-                                from,
-                                Field::new(rank - 1, file + 1),
-                                MoveType::Capture,
-                                Piece::queen(PieceColor::Black),
-                            ));
-                        } else {
-                            v.push(Move::new(
-                                from,
-                                Field::new(rank - 1, file + 1),
-                                MoveType::Capture,
-                            ));
-                        }
-                    }
-                    _ => (),
-                }
-                v
-            }
             PieceColor::White => {
-                let mut v = match self.at(rank + 1, file) {
-                    Square::Empty => {
-                        let mut v = vec![];
-                        if rank == 7 {
-                            v.push(Move::promotion(
-                                from,
-                                Field::new(rank + 1, file),
-                                MoveType::Default,
-                                Piece::queen(PieceColor::White),
-                            ));
-                        } else {
-                            v.push(Move::new(
-                                from,
-                                Field::new(rank + 1, file),
-                                MoveType::Default,
-                            ));
-                        }
-
-                        if rank == 2 {
-                            //Double push
-                            if let Square::Empty = self.at(rank + 2, file) {
-                                v.push(Move::new(
-                                    from,
-                                    Field::new(rank + 2, file),
-                                    MoveType::Default,
-                                ));
-                            }
-                        }
-                        v
-                    }
-                    _ => vec![],
-                };
-
-                //White pawn attacks up to the left
-                match self.at(rank + 1, file - 1) {
-                    Square::Full(p) if matches!(p.color, PieceColor::Black) => {
-                        if rank == 7 {
-                            v.push(Move::promotion(
-                                from,
-                                Field::new(rank + 1, file - 1),
-                                MoveType::Capture,
-                                Piece::queen(PieceColor::White),
-                            ));
-                        } else {
-                            v.push(Move::new(
-                                from,
-                                Field::new(rank + 1, file - 1),
-                                MoveType::Capture,
-                            ));
-                        }
-                    }
-                    _ => (),
-                }
-
-                //White pawn attacks up to the right
-                match self.at(rank + 1, file + 1) {
-                    Square::Full(p) if matches!(p.color, PieceColor::Black) => {
-                        if rank == 7 {
-                            v.push(Move::promotion(
-                                from,
-                                Field::new(rank + 1, file + 1),
-                                MoveType::Capture,
-                                Piece::queen(PieceColor::White),
-                            ));
-                        } else {
-                            v.push(Move::new(
-                                from,
-                                Field::new(rank + 1, file + 1),
-                                MoveType::Capture,
-                            ));
-                        }
-                    }
-                    _ => (),
-                }
-                v
+                starting_rank = 2;
+                promotion_rank = 7;
+                move_offset = 1;
+            }
+            PieceColor::Black => {
+                starting_rank = 7;
+                promotion_rank = 2;
+                move_offset = -1;
             }
         }
+
+        let mut moves = match self.at(rank + move_offset, file) {
+            //If one square in move direction is empty
+            Square::Empty => {
+                let mut standard_moves = vec![];
+
+                standard_moves.push(Move::promotion(
+                    from,
+                    Field::new(rank + move_offset, file),
+                    MoveType::Default,
+                    if rank == promotion_rank {
+                        Some(Piece::queen(color))
+                    } else {
+                        None
+                    },
+                ));
+
+                //Can never be a promotion move
+                if rank == starting_rank {
+                    //Double push
+                    if let Square::Empty = self.at(rank + 2 * move_offset, file) {
+                        standard_moves.push(Move::new(
+                            from,
+                            Field::new(rank + 2 * move_offset, file),
+                            MoveType::Default,
+                        ));
+                    }
+                }
+                standard_moves
+            }
+            _ => vec![],
+        };
+        //Attack to the left
+        //Remember this could also be a promotion move.
+        match self.at(rank + move_offset, file - 1) {
+            Square::Full(p) if p.color == opposite_color => {
+                moves.push(Move::promotion(
+                    from,
+                    Field::new(rank + move_offset, file - 1),
+                    MoveType::Capture,
+                    if rank == promotion_rank {
+                        Some(Piece::queen(color))
+                    } else {
+                        None
+                    },
+                ));
+            }
+            _ => (),
+        }
+
+        //Attack to the right
+        match self.at(rank + move_offset, file + 1) {
+            Square::Full(p) if p.color == opposite_color => {
+                moves.push(Move::promotion(
+                    from,
+                    Field::new(rank + move_offset, file + 1),
+                    MoveType::Capture,
+                    if rank == promotion_rank {
+                        Some(Piece::queen(color))
+                    } else {
+                        None
+                    },
+                ));
+            }
+            _ => (),
+        }
+        moves
     }
 
     fn pseudo_legal_knight_moves(&self, color: PieceColor, from: Field) -> Vec<Move> {
@@ -1552,6 +1468,23 @@ impl Piece {
             PieceKind::King => "♚ ",
         }
     }
+
+    pub fn index(&self) -> usize {
+        let i = match self.kind {
+            PieceKind::Pawn => 0,
+            PieceKind::Bishop => 1,
+            PieceKind::Knight => 2,
+            PieceKind::Rook => 3,
+            PieceKind::Queen => 4,
+            PieceKind::King => 5,
+        };
+
+        i + if self.color == PieceColor::White {
+            0
+        } else {
+            6
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -1600,12 +1533,12 @@ enum BreakLoop {
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Copy, Clone)]
 pub struct Field {
-    rank: i8,
-    file: i8,
+    pub rank: i8,
+    pub file: i8,
 }
 
 impl Field {
-    const fn new(rank: i8, file: i8) -> Self {
+    pub const fn new(rank: i8, file: i8) -> Self {
         Self { rank, file }
     }
 }
