@@ -1,9 +1,11 @@
+//#![warn(clippy::all, clippy::pedantic, clippy::nursery, clippy::cargo)]
 use crate::*;
 use rand::prelude::*;
 use rand_chacha::ChaCha8Rng;
 
 ///This struct only stores the random numbers. It is later used by ZobristState
 /// to modify its hash.
+#[derive(Clone)]
 pub struct ZobristValues {
     //Castling will change white_king, white_rook and both castling rights
     white_king_castle_rights: u64,
@@ -26,7 +28,7 @@ impl ZobristValues {
         for piece in 0..12 {
             for rank in 0..8 {
                 for file in 0..8 {
-                    piece_at[piece][rank][file] = rng.next_u64()
+                    piece_at[piece][rank][file] = rng.next_u64();
                 }
             }
         }
@@ -53,6 +55,7 @@ impl ZobristValues {
     }
 }
 
+#[derive(Clone)]
 pub struct ZobristState {
     pub values: ZobristValues,
     pub hash: u64,
@@ -65,54 +68,46 @@ impl ZobristState {
         Self { values, hash: 0 } //temporary object, hash to be modified
     }
 
-    pub fn from_board_state(board_state: &BoardState) -> Self {
+    pub fn from(board: &Board, turn: PieceColor, castling_rights: &CastlingRights) -> Self {
         //Create an initial object with a hash of 0. The hash of the current
         //board state can then be computed iteratively.
         let mut zobrist_state = Self::new();
         for rank in 1..=8 {
             for file in 1..=8 {
-                if let Square::Full(p) = board_state.board.at(rank, file) {
+                if let Square::Full(p) = board.at(rank, file) {
                     zobrist_state.change_piece(Field::new(rank, file), p);
                 }
             }
         }
 
-        if board_state.turn == PieceColor::Black {
+        if turn == PieceColor::Black {
             zobrist_state.change_black_to_move();
         }
 
-        if board_state
-            .castling_rights
-            .white_king_castle_lost_ply
-            .is_none()
-        {
+        if castling_rights.white_king_castle_lost_ply.is_some() {
             zobrist_state.change_castling_rights(MoveType::CastleKingside, PieceColor::White);
         }
 
-        if board_state
-            .castling_rights
-            .white_queen_castle_lost_ply
-            .is_none()
-        {
+        if castling_rights.white_queen_castle_lost_ply.is_some() {
             zobrist_state.change_castling_rights(MoveType::CastleQueenside, PieceColor::White);
         }
 
-        if board_state
-            .castling_rights
-            .black_king_castle_lost_ply
-            .is_none()
-        {
+        if castling_rights.black_king_castle_lost_ply.is_some() {
             zobrist_state.change_castling_rights(MoveType::CastleKingside, PieceColor::Black);
         }
 
-        if board_state
-            .castling_rights
-            .black_queen_castle_lost_ply
-            .is_none()
-        {
+        if castling_rights.black_queen_castle_lost_ply.is_some() {
             zobrist_state.change_castling_rights(MoveType::CastleQueenside, PieceColor::Black);
         }
         zobrist_state
+    }
+
+    pub fn from_board_state(board_state: &BoardState) -> Self {
+        Self::from(
+            &board_state.board,
+            board_state.turn,
+            &board_state.castling_rights,
+        )
     }
 
     ///Call this function for every piece that is initially present.
@@ -125,7 +120,7 @@ impl ZobristState {
         self.hash ^= self.values.black_to_move;
     }
 
-    ///If there are castling rights initially, call this function for each castling right.
+    ///Only call this function for LOST castling rights!
     pub fn change_castling_rights(&mut self, move_type: MoveType, color: PieceColor) {
         self.hash ^= match move_type {
             MoveType::CastleKingside => match color {

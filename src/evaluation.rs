@@ -1,3 +1,4 @@
+//#![warn(clippy::all, clippy::pedantic, clippy::nursery, clippy::cargo)]
 use std::cmp;
 
 use crate::*;
@@ -150,7 +151,7 @@ const EG_KING_TABLE: [[i32; 8]; 8] = [
     [-53, -34, -21, -11, -28, -14, -24, -43]
 ];
 
-fn mg_table(kind: PieceKind) -> &'static [[i32; 8]; 8] {
+const fn mg_table(kind: PieceKind) -> &'static [[i32; 8]; 8] {
     match kind {
         PieceKind::Pawn => &MG_PAWN_TABLE,
         PieceKind::Knight => &MG_KNIGHT_TABLE,
@@ -161,7 +162,7 @@ fn mg_table(kind: PieceKind) -> &'static [[i32; 8]; 8] {
     }
 }
 
-fn eg_table(kind: PieceKind) -> &'static [[i32; 8]; 8] {
+const fn eg_table(kind: PieceKind) -> &'static [[i32; 8]; 8] {
     match kind {
         PieceKind::Pawn => &EG_PAWN_TABLE,
         PieceKind::Knight => &EG_KNIGHT_TABLE,
@@ -172,7 +173,7 @@ fn eg_table(kind: PieceKind) -> &'static [[i32; 8]; 8] {
     }
 }
 
-fn mg_value(kind: PieceKind) -> i32 {
+const fn mg_value(kind: PieceKind) -> i32 {
     match kind {
         PieceKind::Pawn => 82,
         PieceKind::Knight => 337,
@@ -183,7 +184,7 @@ fn mg_value(kind: PieceKind) -> i32 {
     }
 }
 
-fn eg_value(kind: PieceKind) -> i32 {
+const fn eg_value(kind: PieceKind) -> i32 {
     match kind {
         PieceKind::Pawn => 94,
         PieceKind::Knight => 281,
@@ -196,14 +197,12 @@ fn eg_value(kind: PieceKind) -> i32 {
 
 ///How much a piece counts for the game phase. The fewer pieces on the board, the smaller
 /// the game phase value should be. This is used to decide whether we are in the end game.
-fn gamephase_value(kind: PieceKind) -> i32 {
+const fn gamephase_value(kind: PieceKind) -> i32 {
     match kind {
-        PieceKind::Pawn => 0,
-        PieceKind::Knight => 1,
-        PieceKind::Bishop => 1,
+        PieceKind::Pawn | PieceKind::King => 0,
+        PieceKind::Knight | PieceKind::Bishop => 1,
         PieceKind::Rook => 2,
         PieceKind::Queen => 4,
-        PieceKind::King => 0,
     }
 }
 

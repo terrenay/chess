@@ -23,16 +23,16 @@ fn main() {
                 }
                 count += 1;
                 println!("-- WHITE TO MOVE --");
-                let m = b.minimax(4).0;
+                let m = b.iterative_deepening(1000).0;
                 if m.is_none() {
                     return;
                 }
                 let m = m.unwrap();
-                println!("white makes move {} to {}", m.from, m.to);
+                //println!("white makes move {} to {}", m.from, m.to);
                 b.make(m);
                 b.draw(true);
                 println!("-- BLACK TO MOVE --");
-                let m = b.minimax(4).0;
+                let m = b.iterative_deepening(1000).0;
                 if m.is_none() {
                     return;
                 }
@@ -65,7 +65,7 @@ fn main() {
                             "BLACK IN CHECK (before black's move): {}",
                             b.check(PieceColor::Black).to_string().red()
                         );
-                        let m = b.minimax(5).0;
+                        let m = b.iterative_deepening(500).0;
                         if m.is_none() {
                             return;
                         }

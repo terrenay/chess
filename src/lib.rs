@@ -2,20 +2,26 @@
 mod evaluation;
 mod zobrist;
 
-use std::fmt::{self, Display};
+use std::{
+    fmt::{self, Display},
+    sync::mpsc,
+    thread,
+    time::{Duration, Instant},
+};
 
 use colored::Colorize;
 use ndarray::prelude::*;
+use zobrist::*;
 
 const STARTING_POSITION: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq";
 
+#[derive(Clone)]
 pub struct BoardState {
     pub board: Board,
     pub turn: PieceColor,
     ply: u16,
     pub castling_rights: CastlingRights,
-
-    //en_passant: Option<Field>,
+    zobrist: ZobristState,
     moves: Vec<Move>,
     taken: Vec<Piece>,
 }
@@ -33,6 +39,8 @@ impl BoardState {
     }
 
     ///Assumes root has color state.turn
+    ///
+    /// <b>Recommended to only call it with even depths to avoid biased evaluations.</b>
     pub fn minimax(&mut self, depth: i32) -> (Option<Move>, i32) {
         // println!("Enter minimax, depth {}", depth);
         //todo!("crasht sobald es ein forced checkmate sieht. returnt normal, best_move wird nie gesetzt. #moves > 0");
@@ -50,10 +58,13 @@ impl BoardState {
                 for m in self.generate_moves() {
                     // println!("root: white try move {}", m);
 
-                    if alpha == i32::MAX || beta == i32::MIN {
+                    //Das ist nur sinnvoll, wenn klar ist, dass der Gegner das forced checkmate sieht.
+                    //Der verlierende Spieler würde dann einen zufälligen move spielen, weil sein Schicksal eh besiegelt ist.
+                    //Aber falls der Gegner nicht optimal spielt, wollen wir trotzdem den besten move finden!
+                    /*if alpha == i32::MAX || beta == i32::MIN {
                         println!("forced checkmate, early return.");
                         return (best_move, best_value);
-                    }
+                    }*/
 
                     self.make(m);
                     // self.draw_board(true);
@@ -67,6 +78,7 @@ impl BoardState {
                         best_move.get_or_insert(m);
                         // println!("root: didnt put white in check.");
                         let score = self.minimax_helper(depth - 1, alpha, beta);
+
                         moves += 1;
                         if score > best_value {
                             best_move = Some(m);
@@ -93,7 +105,13 @@ impl BoardState {
                         return (None, 0);
                     }
                 }
-                println!("Found {} legal moves", moves);
+
+                //If only kings remain
+                if self.taken.len() == 30 {
+                    println!("STALEMATE! THE GAME IS A DRAW!");
+                    return (None, 0);
+                }
+                //println!("Found {} legal moves", moves);
                 (best_move, best_value)
             }
 
@@ -102,10 +120,10 @@ impl BoardState {
                 let mut best_value = i32::MAX;
                 for m in self.generate_moves() {
                     // println!("root: black try move {}", m);
-                    if alpha == i32::MAX || beta == i32::MIN {
+                    /*if alpha == i32::MAX || beta == i32::MIN {
                         println!("forced checkmate, early return.");
                         return (best_move, best_value);
-                    }
+                    }*/
                     self.make(m);
                     // self.draw_board(true);
                     //It's now black's turn
@@ -139,7 +157,12 @@ impl BoardState {
                     }
                 }
 
-                println!("Found {} legal moves", moves);
+                if self.taken.len() == 30 {
+                    println!("STALEMATE! THE GAME IS A DRAW!");
+                    return (None, 0);
+                }
+
+                //println!("Found {} legal moves", moves);
                 (best_move, best_value)
             }
         }
@@ -187,7 +210,9 @@ impl BoardState {
                         }
                         self.unmake();
                     }
-                    if moves == 0 && !self.checkmate_given_zero_moves(PieceColor::Black) {
+                    if (moves == 0 && !self.checkmate_given_zero_moves(PieceColor::Black))
+                        || self.taken.len() == 30
+                    {
                         //This position is stalemate
                         best_value = 0;
                         // println!("{}: no moves but no checkmate", depth);
@@ -224,7 +249,9 @@ impl BoardState {
                         }
                         self.unmake();
                     }
-                    if moves == 0 && !self.checkmate_given_zero_moves(PieceColor::White) {
+                    if (moves == 0 && !self.checkmate_given_zero_moves(PieceColor::White))
+                        || self.taken.len() == 30
+                    {
                         //This position is stalemate
                         best_value = 0;
                         // println!("{}: no moves but no checkmate", depth);
@@ -233,6 +260,52 @@ impl BoardState {
                 }
             }
         }
+    }
+
+    ///Ensures minimax is only called with even depths. Never takes longer than time_limit.
+    pub fn iterative_deepening(&self, time_limit_millis: u64) -> (Option<Move>, i32) {
+        let mut res = (None, 42); //default not used because the loop always runs at least once
+        let mut depth = 1; //Root is frontier node. All children (after all of root's possible moves) are evaluated with eval()
+        let max_duration = Duration::from_millis(time_limit_millis);
+        let start = Instant::now();
+
+        'outer: loop {
+            let (sender, receiver) = mpsc::channel();
+            let mut board_clone = self.clone();
+
+            thread::spawn(move || {
+                let worker_res = board_clone.minimax(depth);
+                sender.send(worker_res);
+            });
+
+            loop {
+                if start.elapsed() >= max_duration && depth > 1 {
+                    break 'outer;
+                }
+
+                if let Ok(worker_res) = receiver.try_recv() {
+                    res = worker_res;
+                    println!(
+                        "Depth {} gives {} with an expected eval of {}",
+                        depth,
+                        res.0.unwrap(),
+                        res.1
+                    );
+                    break;
+                }
+            }
+
+            //Only break if we have fully searched at least to a depth of 1.
+            depth += 1;
+        }
+
+        println!(
+            "Searched to a depth of {} plies in {} ms.",
+            depth - 1,
+            start.elapsed().as_millis()
+        );
+
+        res
     }
 
     ///Find the best move for the player whose turn it is by checking all possible moves
@@ -433,7 +506,7 @@ impl BoardState {
                 }
             }
         }
-        v = self.board.avoid_king_captures(v);
+        v = self.avoid_touching_kings(v);
         v
     }
 
@@ -780,6 +853,33 @@ impl BoardState {
         v
     }
 
+    ///Given pseudo-legal moves of all pices, remove those that would put the two kings too close to each other
+    /// and remove those that would take a king.
+    fn avoid_touching_kings(&self, v: Vec<Move>) -> Vec<Move> {
+        let opponent_king = match self.turn {
+            PieceColor::White => self.board.black_king,
+            PieceColor::Black => self.board.white_king,
+        };
+
+        let my_king = match self.turn {
+            PieceColor::White => self.board.white_king,
+            PieceColor::Black => self.board.black_king,
+        };
+
+        v.into_iter()
+            .filter(|m| {
+                //We don't want the kings too close
+                (if m.from == my_king {
+                    (m.to.rank - opponent_king.rank).abs() > 1
+                        || (m.to.file - opponent_king.file).abs() > 1
+                } else {
+                    true
+                }) && m.to != my_king //and we don't want to take any kings
+                    && m.to != opponent_king
+            })
+            .collect()
+    }
+
     ///Draw chess board using unicode characters.
     /// todo: could draw pseudolegal moves for a specific piece (maybe in
     /// another function)
@@ -910,6 +1010,7 @@ impl BoardState {
         Ok(turn)
     }
 
+    ///Standard: Assume no castling rights
     fn from_fen(fen: &str) -> Result<BoardState, Error> {
         let chars = &mut fen.chars();
 
@@ -921,11 +1022,14 @@ impl BoardState {
 
         let castling_rights = parse_castling_rights_fen(chars, &board)?;
 
+        let zobrist = ZobristState::from(&board, turn, &castling_rights);
+
         Ok(Self {
             board,
             turn,
             ply: 1,
             castling_rights,
+            zobrist,
             moves: vec![],
             taken: vec![],
         })
@@ -933,6 +1037,7 @@ impl BoardState {
 }
 
 ///Consumes trailing whitespace, if any.
+/// Standard: Assume no castling rights.
 fn parse_castling_rights_fen(
     chars: &mut std::str::Chars,
     board: &Board,
@@ -978,6 +1083,7 @@ fn parse_castling_rights_fen(
     })
 }
 
+#[derive(Clone)]
 pub struct CastlingRights {
     pub white_queen_castle_lost_ply: Option<u16>,
     pub black_queen_castle_lost_ply: Option<u16>,
@@ -1028,6 +1134,7 @@ impl Display for Move {
     }
 }
 
+#[derive(Clone)]
 pub struct Board {
     board: Array2<Square>,
     white_king: Field,
@@ -1228,10 +1335,6 @@ impl Board {
         let mut diff = 1;
         let Field { rank, file } = from;
 
-        //Todo: bekommt hier irgendwie eine alte version
-        //des boards. Vielleicht muss ich das mehr mit
-        //Referenzen rumpassen?
-
         //Up right
         while rank + diff <= 8 && file + diff <= 8 {
             let to = Field::new(rank + diff, file + diff);
@@ -1382,12 +1485,6 @@ impl Board {
         //Thus we accept unsigned ints.
         debug_assert!(rank >= -1 && rank <= 10 && file >= -1 && file <= 10);
         ((10 - rank) as usize, (file + 1) as usize)
-    }
-
-    fn avoid_king_captures(&self, v: Vec<Move>) -> Vec<Move> {
-        v.into_iter()
-            .filter(|m| m.to != self.white_king && m.to != self.black_king)
-            .collect()
     }
 
     ///Returns true if piece is on that field.
@@ -1570,7 +1667,7 @@ impl PieceColor {
 }
 
 impl Display for PieceColor {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
             PieceColor::Black => write!(f, "Black"),
             PieceColor::White => write!(f, "White"),
@@ -1658,6 +1755,8 @@ mod tests {
         assert_eq!(b.evaluate(), i32::MAX);
     }
 
+    //Achtung falls verhalten sich ändert mit hashtable, weil hier castling rights in der start-
+    //position ignoriert werden
     #[test]
     fn mate_in_1_depth_3() {
         let mut b = BoardState::from_fen("1k6/ppp3Q1/8/8/8/8/6K1/8 w").unwrap();
@@ -1666,17 +1765,36 @@ mod tests {
         b.make(m.0.unwrap());
         assert!(b.check(PieceColor::Black));
         assert_eq!(b.evaluate(), i32::MAX);
+        println!("{}", m.0.unwrap());
+    }
+
+    #[test]
+    fn mate_in_1_iterative() {
+        let mut b = BoardState::from_fen("1k6/ppp3Q1/8/8/8/8/6K1/8 w").unwrap();
+        let m = b.iterative_deepening(500);
+        assert!(m.1 == i32::MAX);
+        b.make(m.0.unwrap());
+        assert!(b.check(PieceColor::Black));
+        assert_eq!(b.evaluate(), i32::MAX);
+        println!("{}", m.0.unwrap());
     }
 
     #[test]
     fn mate_in_3_endgame() {
         let mut b = BoardState::from_fen("7R/2N1P3/8/8/8/8/k6K/8 w").unwrap();
         let m = b.minimax(5);
-        assert!(m.1 == i32::MAX);
+        assert_eq!(m.0.unwrap().to, Field::new(8, 2));
+    }
+
+    #[test]
+    fn mate_in_3_iterative_long() {
+        let b = BoardState::from_fen("7R/2N1P3/8/8/8/8/k6K/8 w").unwrap();
+        let m = b.iterative_deepening(5000);
+        assert_eq!(m.0.unwrap().to, Field::new(8, 2));
     }
 
     //This takes a long time, disable if not needed
-    #[test]
+    //#[test]
     /*fn mate_in_3_depth_5() {
         let mut b = BoardState::from_fen("r5k1/1bp3pp/rp6/3N4/4P3/P4R2/6PP/5RK1 w").unwrap();
         let m = b.minimax(5);
@@ -1848,6 +1966,106 @@ mod tests {
                 Field::new(1, 1),
             ],
         );
+    }
+
+    #[test]
+    fn correct_hash_in_board_state() {
+        let b1 = BoardState::new();
+        let hasher = ZobristState::from_board_state(&b1);
+        assert_eq!(hasher.hash, b1.zobrist.hash);
+    }
+
+    #[test]
+    fn hash_from_board_state() {
+        let b1 =
+            BoardState::from_fen("rnbqkbnr/ppp1pppp/8/3p4/4P3/8/PPPP1PPP/RNBQKBNR w KQkq").unwrap();
+        let correct_hash = zobrist::ZobristState::from_board_state(&b1).hash;
+
+        //hash von initial position nehmen, change_hahs aufrufen für die pieces
+        //soll nur schauen, dass der hash mal deterministisch ist.
+
+        let b2 = BoardState::new();
+        let mut test_hasher = zobrist::ZobristState::from_board_state(&b2);
+        test_hasher.change_piece(
+            Field::new(2, 5),
+            Piece {
+                kind: PieceKind::Pawn,
+                color: PieceColor::White,
+            },
+        );
+        test_hasher.change_piece(
+            Field::new(4, 5),
+            Piece {
+                kind: PieceKind::Pawn,
+                color: PieceColor::White,
+            },
+        );
+        test_hasher.change_black_to_move();
+        test_hasher.change_piece(
+            Field::new(7, 4),
+            Piece {
+                kind: PieceKind::Pawn,
+                color: PieceColor::Black,
+            },
+        );
+        test_hasher.change_piece(
+            Field::new(5, 4),
+            Piece {
+                kind: PieceKind::Pawn,
+                color: PieceColor::Black,
+            },
+        );
+        test_hasher.change_black_to_move();
+        assert_eq!(correct_hash, test_hasher.hash);
+    }
+
+    #[test]
+    fn hash_castling_rights() {
+        let b1 = BoardState::from_fen("rnbqkb1r/p1p1pppp/1p3n2/3p4/4P3/5N2/PPPPBPPP/RNBQ1RK1 b kq")
+            .unwrap();
+        let correct_hash = zobrist::ZobristState::from_board_state(&b1).hash;
+
+        //hash von initial position nehmen, change_hahs aufrufen für die pieces
+        //soll nur schauen, dass der hash mal deterministisch ist.
+
+        let b2 =
+            BoardState::from_fen("rnbqkb1r/p1p1pppp/1p3n2/3p4/4P3/5N2/PPPPBPPP/RNBQK2R w KQkq")
+                .unwrap();
+        let mut test_hasher = zobrist::ZobristState::from_board_state(&b2);
+        //Move king
+        test_hasher.change_piece(
+            Field::new(1, 5),
+            Piece {
+                kind: PieceKind::King,
+                color: PieceColor::White,
+            },
+        );
+        test_hasher.change_piece(
+            Field::new(1, 7),
+            Piece {
+                kind: PieceKind::King,
+                color: PieceColor::White,
+            },
+        );
+        //Move rook
+        test_hasher.change_piece(
+            Field::new(1, 8),
+            Piece {
+                kind: PieceKind::Rook,
+                color: PieceColor::White,
+            },
+        );
+        test_hasher.change_piece(
+            Field::new(1, 6),
+            Piece {
+                kind: PieceKind::Rook,
+                color: PieceColor::White,
+            },
+        );
+        test_hasher.change_castling_rights(MoveType::CastleKingside, PieceColor::White);
+        test_hasher.change_castling_rights(MoveType::CastleQueenside, PieceColor::White);
+        test_hasher.change_black_to_move();
+        assert_eq!(correct_hash, test_hasher.hash);
     }
 
     ///Compare v1 and v2, ignoring the order of the fields
