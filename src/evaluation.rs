@@ -7,6 +7,123 @@ use crate::*;
 
 //From: https://www.chessprogramming.org/PeSTO%27s_Evaluation_Function
 
+#[derive(Debug, Clone, Copy)]
+pub enum Evaluation {
+    Value(i32),
+    //u16 is only used in dynamic evaluation to represent the number of moves until a forced checkmate occurs for sure
+    //if the winning player plays perfectly.
+    //In static evaluation, u16 is set to 0 iff the current position is checkmate. Otherwise give a normal value.
+    Mate(PieceColor, u16), //winning color, remaining moves
+    Draw,
+}
+
+impl Evaluation {
+    fn draw_to_0(&self) -> Self {
+        match self {
+            Evaluation::Draw => Self::Value(0),
+            _ => *self,
+        }
+    }
+
+    pub fn increment_if_mate(self) -> Self {
+        match self {
+            Evaluation::Mate(color, rem) => Self::Mate(color, rem + 1),
+            _ => self,
+        }
+    }
+}
+
+//Order: Mate(Black, 0) < Mate(Black, i) < any i32 < 0 = Draw < any i32 < Mate(White, i) < Mate(White, 0)
+//Black minimizes, White maximizes
+
+//Treat i32::MAX as checkmate for white, i32::MIN as checkmate for black, 0 as draw
+impl PartialEq for Evaluation {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Value(self_val), Self::Value(other_val)) => self_val == other_val,
+            (Self::Mate(self_color, self_rem), Self::Mate(other_color, other_rem)) => {
+                self_color == other_color && self_rem == other_rem
+            }
+            (&Self::Value(self_val), &Self::Mate(other_color, other_rem))
+            | (&Self::Mate(other_color, other_rem), &Self::Value(self_val)) => {
+                (self_val == i32::MIN && other_color == PieceColor::Black && other_rem == 0)
+                    || (self_val == i32::MAX && other_color == PieceColor::White && other_rem == 0)
+            }
+            (&Self::Value(self_val), &Self::Draw) | (&Self::Draw, &Self::Value(self_val)) => {
+                self_val == 0
+            }
+            (Self::Mate(_, _), Self::Draw) | (Self::Draw, Self::Mate(_, _)) => false,
+            (Self::Draw, Self::Draw) => true,
+        }
+    }
+}
+
+impl PartialOrd for Evaluation {
+    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
+        use cmp::Ordering::*;
+        use Evaluation::*;
+        use PieceColor::*;
+        //Make sure that we always replace max and min bei mate
+        if let Self::Value(v) = *self {
+            assert_ne!(v, i32::MAX);
+            assert_ne!(v, i32::MIN);
+        }
+        if let Self::Value(v) = *other {
+            assert_ne!(v, i32::MAX);
+            assert_ne!(v, i32::MIN);
+        }
+
+        //Use PartialEq (defined above)
+        if self == other {
+            return Some(Equal);
+        }
+
+        //We don't want to treat a draw different from an evaluation of 0
+        let a = self.draw_to_0();
+        let b = other.draw_to_0();
+
+        let res = match (a, b) {
+            (Mate(Black, 0), _) => Less,
+            (Mate(Black, i), Mate(Black, j)) => {
+                if i < j {
+                    Less
+                } else if i > j {
+                    Greater
+                } else {
+                    panic!()
+                }
+            }
+            (Mate(Black, _), _) => Less,
+            (_, Mate(Black, _)) => Greater,
+            (Value(left), Value(right)) => {
+                if left < right {
+                    Less
+                } else if left > right {
+                    Greater
+                } else {
+                    panic!()
+                }
+            }
+            (Mate(White, 0), _) => Greater,
+            (Mate(White, i), Mate(White, j)) => {
+                if i < j {
+                    Greater
+                } else if i > j {
+                    Less
+                } else {
+                    panic!()
+                }
+            }
+            (Mate(White, _), _) => Greater,
+            (_, Mate(White, _)) => Less,
+            (Draw, _) => panic!(),
+            (_, Draw) => panic!(),
+        };
+
+        Some(res)
+    }
+}
+
 #[rustfmt::skip]
 const MG_PAWN_TABLE: [[i32; 8]; 8] = [
     [  0,   0,   0,   0,   0,   0,  0,   0],
@@ -209,20 +326,26 @@ const fn gamephase_value(kind: PieceKind) -> i32 {
 ///Positive: White has an advantage
 ///
 /// Negative: Black has an advantage
-pub fn evaluate(state: &mut BoardState) -> i32 {
+pub fn evaluate(state: &mut BoardState) -> Evaluation {
     //If current player has no legal moves (every pseudo-legal move lands him in check)
     if no_legal_moves(state) {
         //If the current player is currently in check as well, it's checkmate
         if state.checkmate_given_zero_moves(state.turn.opposite()) {
             //If white is checkmated, evaluate to -infty
             return if state.turn == PieceColor::White {
-                i32::MIN
+                Evaluation::Mate(PieceColor::Black, 0)
             } else {
-                i32::MAX
+                Evaluation::Mate(PieceColor::White, 0)
             };
         } else {
-            return 0; //No legal moves but current player not in check -> stalemate
+            return Evaluation::Draw; //No legazl moves but current player not in check -> stalemate
         }
+    }
+
+    //This will become draw by insufficient material once it's done, for now just consider it a draw if only
+    //the kings remain.
+    if state.taken.len() == 30 {
+        return Evaluation::Draw;
     }
 
     let board = &state.board;
@@ -273,7 +396,7 @@ pub fn evaluate(state: &mut BoardState) -> i32 {
     let mg_phase = cmp::min(gamephase, 24);
     let eg_phase = 24 - mg_phase;
 
-    (mg_score * mg_phase + eg_score * eg_phase) / 24
+    Evaluation::Value((mg_score * mg_phase + eg_score * eg_phase) / 24)
 }
 
 fn no_legal_moves(state: &mut BoardState) -> bool {

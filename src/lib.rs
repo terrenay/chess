@@ -10,10 +10,12 @@ use std::{
 };
 
 use colored::Colorize;
+use evaluation::Evaluation;
 use ndarray::prelude::*;
 use zobrist::*;
 
-const STARTING_POSITION: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq";
+//const STARTING_POSITION: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq";
+const STARTING_POSITION: &str = "rnbqkbnr/1p2pppp/p2p4/2p5/4P3/2N2N2/PPPP1PPP/R1BQKB1R w KQkq"; //Sicilian after opening
 
 #[derive(Clone)]
 pub struct BoardState {
@@ -23,7 +25,7 @@ pub struct BoardState {
     pub castling_rights: CastlingRights,
     zobrist: ZobristState,
     moves: Vec<Move>,
-    taken: Vec<Piece>,
+    pub taken: Vec<Piece>,
 }
 
 impl BoardState {
@@ -34,27 +36,25 @@ impl BoardState {
     ///Static evaluation
     ///
     /// Positive: White's advantage
-    pub fn evaluate(&mut self) -> i32 {
+    pub fn evaluate(&mut self) -> Evaluation {
         evaluation::evaluate(self)
     }
 
     ///Assumes root has color state.turn
-    ///
-    /// <b>Recommended to only call it with even depths to avoid biased evaluations.</b>
-    pub fn minimax(&mut self, depth: i32) -> (Option<Move>, i32) {
+    pub fn minimax(&mut self, depth: u32) -> (Option<Move>, Evaluation) {
         // println!("Enter minimax, depth {}", depth);
         //todo!("crasht sobald es ein forced checkmate sieht. returnt normal, best_move wird nie gesetzt. #moves > 0");
         let mut best_move = None;
         //alpha is the most positive eval that white is already assured of at this point
         //beta is the most negative eval that black is already assured of at this point
         //Root cannot cut branches! (Otherwise, what would be the point of having a tree?)
-        let mut alpha = i32::MIN;
-        let mut beta = i32::MAX;
+        let mut alpha = Evaluation::Mate(PieceColor::Black, 0);
+        let mut beta = Evaluation::Mate(PieceColor::White, 0);
         let mut moves = 0;
         match self.turn {
             //White is the maximizing player
             PieceColor::White => {
-                let mut best_value = i32::MIN;
+                let mut best_score = Evaluation::Mate(PieceColor::Black, 0);
                 for m in self.generate_moves() {
                     // println!("root: white try move {}", m);
 
@@ -75,14 +75,18 @@ impl BoardState {
                     if !self.check(self.turn.opposite()) {
                         //In case of a forced checkmate sequence, just play the first
                         //LEGAL move (legal = does not put me in check)
+                        //is this still needed?
                         best_move.get_or_insert(m);
                         // println!("root: didnt put white in check.");
                         let score = self.minimax_helper(depth - 1, alpha, beta);
 
                         moves += 1;
-                        if score > best_value {
+
+                        //If score is checkmate for white: override best_score if
+
+                        if score > best_score {
                             best_move = Some(m);
-                            best_value = score;
+                            best_score = score;
                             // println!("root: best value updated to: {}", best_value);
                         }
                         if score > alpha {
@@ -99,25 +103,25 @@ impl BoardState {
                 if moves == 0 {
                     if self.checkmate_given_zero_moves(PieceColor::Black) {
                         println!("CHECKMATE! BLACK WINS!");
-                        return (None, i32::MIN);
+                        return (None, Evaluation::Mate(PieceColor::Black, 0));
                     } else {
                         println!("STALEMATE! THE GAME IS A DRAW!");
-                        return (None, 0);
+                        return (None, Evaluation::Draw);
                     }
                 }
 
                 //If only kings remain
                 if self.taken.len() == 30 {
                     println!("STALEMATE! THE GAME IS A DRAW!");
-                    return (None, 0);
+                    return (None, Evaluation::Draw);
                 }
                 //println!("Found {} legal moves", moves);
-                (best_move, best_value)
+                (best_move, best_score)
             }
 
             //Black is the minimizing player
             PieceColor::Black => {
-                let mut best_value = i32::MAX;
+                let mut best_score = Evaluation::Mate(PieceColor::White, 0);
                 for m in self.generate_moves() {
                     // println!("root: black try move {}", m);
                     /*if alpha == i32::MAX || beta == i32::MIN {
@@ -133,9 +137,9 @@ impl BoardState {
                         // println!("root: didnt put black in check");
                         let score = self.minimax_helper(depth - 1, alpha, beta);
                         moves += 1;
-                        if score < best_value {
+                        if score < best_score {
                             best_move = Some(m);
-                            best_value = score;
+                            best_score = score;
                             // println!("root: best value updated to: {}", best_value);
                         }
                         if score < beta {
@@ -150,44 +154,49 @@ impl BoardState {
                 if moves == 0 {
                     if self.checkmate_given_zero_moves(PieceColor::White) {
                         println!("CHECKMATE! WHITE WINS!");
-                        return (None, i32::MAX);
+                        return (None, Evaluation::Mate(PieceColor::White, 0));
                     } else {
                         println!("STALEMATE! THE GAME IS A DRAW!");
-                        return (None, 0);
+                        return (None, Evaluation::Draw);
                     }
                 }
 
                 if self.taken.len() == 30 {
                     println!("STALEMATE! THE GAME IS A DRAW!");
-                    return (None, 0);
+                    return (None, Evaluation::Draw);
                 }
 
                 //println!("Found {} legal moves", moves);
-                (best_move, best_value)
+                (best_move, best_score)
             }
         }
     }
 
-    fn minimax_helper(&mut self, depth: i32, mut alpha: i32, mut beta: i32) -> i32 {
-        //alpha is the most positive eval that white is already assured of at this point
-        //beta is the most negative eval that black is already assured of at this point
+    ///If a checkmate is found, increases the distance to it by 1 (such that the number of remaining moves
+    /// remains consistent).
+    /// Not totally sure whether i need to increment in the base case.
+    fn minimax_helper(
+        &mut self,
+        depth: u32,
+        mut alpha: Evaluation,
+        mut beta: Evaluation,
+    ) -> Evaluation {
         if depth == 0 {
-            let res = self.evaluate();
-            // println!("call evaluate() returned {}", res);
+            let res = self.evaluate().increment_if_mate();
             res
         } else {
             let mut moves = 0;
             match self.turn {
                 //White is the maximizing player
                 PieceColor::White => {
-                    let mut best_value = i32::MIN;
+                    let mut best_eval = Evaluation::Mate(PieceColor::Black, 0);
                     for m in self.generate_moves() {
                         // println!("{}: white try move {}", depth, m);
                         //Branch cut: Don't explore this subtree further if it is already
                         //obvious that this variant will not be taken.
                         if beta <= alpha {
                             // println!("beta <= alpha: return");
-                            return best_value;
+                            return best_eval.increment_if_mate();
                         }
                         self.make(m);
                         // self.draw_board(true);
@@ -197,36 +206,32 @@ impl BoardState {
                             // println!("{}: didnt put white in check", depth);
                             let score = self.minimax_helper(depth - 1, alpha, beta);
                             moves += 1;
-                            if score > best_value {
-                                best_value = score;
+                            if score > best_eval {
+                                best_eval = score;
                                 // println!("{}: best value updated to: {}", depth, best_value);
                             }
                             if score > alpha {
                                 alpha = score;
                                 // println!("{}: alpha updated to: {}", depth, alpha);
                             }
-                        } else {
-                            // println!("{}: but put white in check", depth);
                         }
                         self.unmake();
                     }
                     if (moves == 0 && !self.checkmate_given_zero_moves(PieceColor::Black))
                         || self.taken.len() == 30
                     {
-                        //This position is stalemate
-                        best_value = 0;
-                        // println!("{}: no moves but no checkmate", depth);
+                        best_eval = Evaluation::Draw;
                     }
-                    best_value
+                    best_eval.increment_if_mate()
                 }
                 //Black is the minimizing player
                 PieceColor::Black => {
-                    let mut best_value = i32::MAX;
+                    let mut best_value = Evaluation::Mate(PieceColor::White, 0);
                     for m in self.generate_moves() {
                         // println!("{}: black try move {}", depth, m);
                         if beta <= alpha {
                             // println!("beta <= alpha: return");
-                            return best_value;
+                            return best_value.increment_if_mate();
                         }
                         self.make(m);
                         // self.draw_board(true);
@@ -244,27 +249,23 @@ impl BoardState {
                                 beta = score;
                                 // println!("{}: beta updated to: {}", depth, beta);
                             }
-                        } else {
-                            // println!("{}: but put black in check", depth);
                         }
                         self.unmake();
                     }
                     if (moves == 0 && !self.checkmate_given_zero_moves(PieceColor::White))
                         || self.taken.len() == 30
                     {
-                        //This position is stalemate
-                        best_value = 0;
-                        // println!("{}: no moves but no checkmate", depth);
+                        best_value = Evaluation::Draw;
                     }
-                    best_value
+                    best_value.increment_if_mate()
                 }
             }
         }
     }
 
     ///Ensures minimax is only called with even depths. Never takes longer than time_limit.
-    pub fn iterative_deepening(&self, time_limit_millis: u64) -> (Option<Move>, i32) {
-        let mut res = (None, 42); //default not used because the loop always runs at least once
+    pub fn iterative_deepening(&self, time_limit_millis: u64) -> (Option<Move>, Evaluation) {
+        let mut res = (None, Evaluation::Value(42)); //default not used because the loop always runs at least once
         let mut depth = 1; //Root is frontier node. All children (after all of root's possible moves) are evaluated with eval()
         let max_duration = Duration::from_millis(time_limit_millis);
         let start = Instant::now();
@@ -286,7 +287,7 @@ impl BoardState {
                 if let Ok(worker_res) = receiver.try_recv() {
                     res = worker_res;
                     println!(
-                        "Depth {} gives {} with an expected eval of {}",
+                        "Depth {} gives {} with an expected eval of {:#?}",
                         depth,
                         res.0.unwrap(),
                         res.1
@@ -1731,28 +1732,28 @@ mod tests {
     fn back_rank_mate() {
         let mut b = BoardState::from_fen("1k4Q1/ppp5/8/8/8/8/6K1/8 b").unwrap();
         assert!(b.check(PieceColor::Black));
-        assert_eq!(b.evaluate(), i32::MAX);
+        assert_eq!(b.evaluate(), Evaluation::Mate(PieceColor::White, 0));
     }
 
     #[test]
     fn mate_in_1_depth_1() {
         let mut b = BoardState::from_fen("1k6/ppp3Q1/8/8/8/8/6K1/8 w").unwrap();
         let m = b.minimax(1);
-        assert!(m.1 == i32::MAX);
+        assert!(m.1 == Evaluation::Mate(PieceColor::White, 1));
         b.make(m.0.unwrap());
         assert!(b.check(PieceColor::Black));
-        assert_eq!(b.evaluate(), i32::MAX);
+        assert_eq!(b.evaluate(), Evaluation::Mate(PieceColor::White, 0));
     }
 
     #[test]
     fn mate_in_1_depth_2() {
         let mut b = BoardState::from_fen("1k6/ppp3Q1/8/8/8/8/6K1/8 w").unwrap();
         let m = b.minimax(2);
-        println!("got {}, {}", m.0.unwrap(), m.1);
-        assert!(m.1 == i32::MAX);
+        println!("got {}, {:#?}", m.0.unwrap(), m.1);
+        assert!(m.1 == Evaluation::Mate(PieceColor::White, 1));
         b.make(m.0.unwrap());
         assert!(b.check(PieceColor::Black));
-        assert_eq!(b.evaluate(), i32::MAX);
+        assert_eq!(b.evaluate(), Evaluation::Mate(PieceColor::White, 0));
     }
 
     //Achtung falls verhalten sich ändert mit hashtable, weil hier castling rights in der start-
@@ -1761,10 +1762,10 @@ mod tests {
     fn mate_in_1_depth_3() {
         let mut b = BoardState::from_fen("1k6/ppp3Q1/8/8/8/8/6K1/8 w").unwrap();
         let m = b.minimax(3);
-        assert!(m.1 == i32::MAX);
+        assert!(m.1 == Evaluation::Mate(PieceColor::White, 1));
         b.make(m.0.unwrap());
         assert!(b.check(PieceColor::Black));
-        assert_eq!(b.evaluate(), i32::MAX);
+        assert_eq!(b.evaluate(), Evaluation::Mate(PieceColor::White, 0));
         println!("{}", m.0.unwrap());
     }
 
@@ -1772,10 +1773,10 @@ mod tests {
     fn mate_in_1_iterative() {
         let mut b = BoardState::from_fen("1k6/ppp3Q1/8/8/8/8/6K1/8 w").unwrap();
         let m = b.iterative_deepening(500);
-        assert!(m.1 == i32::MAX);
+        assert!(m.1 == Evaluation::Mate(PieceColor::White, 1));
         b.make(m.0.unwrap());
         assert!(b.check(PieceColor::Black));
-        assert_eq!(b.evaluate(), i32::MAX);
+        assert_eq!(b.evaluate(), Evaluation::Mate(PieceColor::White, 0));
         println!("{}", m.0.unwrap());
     }
 
@@ -1787,11 +1788,18 @@ mod tests {
     }
 
     #[test]
+    fn mate_in_3_with_rem_count() {
+        let mut b = BoardState::from_fen("8/p1p2pp1/4k3/8/P1n2PPp/3K3P/3p4/1r6 b").unwrap();
+        let m = b.minimax(5);
+        assert_eq!(m.1, Evaluation::Mate(PieceColor::Black, 5));
+    }
+
+    /*#[test]
     fn mate_in_3_iterative_long() {
         let b = BoardState::from_fen("7R/2N1P3/8/8/8/8/k6K/8 w").unwrap();
         let m = b.iterative_deepening(5000);
         assert_eq!(m.0.unwrap().to, Field::new(8, 2));
-    }
+    }*/
 
     //This takes a long time, disable if not needed
     //#[test]
