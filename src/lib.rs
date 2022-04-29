@@ -3,19 +3,23 @@ mod evaluation;
 mod zobrist;
 
 use std::{
+    collections::HashMap,
     fmt::{self, Display},
-    sync::mpsc,
+    sync::{mpsc, Arc, Mutex},
     thread,
     time::{Duration, Instant},
 };
 
 use colored::Colorize;
-use evaluation::Evaluation;
+use evaluation::*;
 use ndarray::prelude::*;
 use zobrist::*;
 
 //const STARTING_POSITION: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq";
-const STARTING_POSITION: &str = "rnbqkbnr/1p2pppp/p2p4/2p5/4P3/2N2N2/PPPP1PPP/R1BQKB1R w KQkq"; //Sicilian after opening
+//const STARTING_POSITION: &str = "rnbqkbnr/1p2pppp/p2p4/2p5/4P3/2N2N2/PPPP1PPP/R1BQKB1R w KQkq"; //Sicilian after opening
+const STARTING_POSITION: &str = "rn1qk2r/p1ppbppp/bp2pn2/8/2PP4/1P3NP1/P2BPP1P/RN1QKB1R w KQkq"; //Queens indian
+
+const TRANSPOSITION_TABLE_SIZE: usize = 1_048_583;
 
 #[derive(Clone)]
 pub struct BoardState {
@@ -33,6 +37,11 @@ impl BoardState {
         Self::from_fen(STARTING_POSITION).unwrap()
     }
 
+    ///Get index to transposition table, depending on TRANSPOSITION_TABLE_SIZE
+    fn transposition_table_index(&self) -> u32 {
+        (self.zobrist.hash % TRANSPOSITION_TABLE_SIZE as u64) as u32
+    }
+
     ///Static evaluation
     ///
     /// Positive: White's advantage
@@ -40,65 +49,49 @@ impl BoardState {
         evaluation::evaluate(self)
     }
 
+    pub fn minimax_empty_table(&mut self, depth: u32) -> (Option<Move>, Evaluation) {
+        self.minimax(
+            depth,
+            &mut HashMap::<u32, TranspositionEntry>::with_capacity(TRANSPOSITION_TABLE_SIZE),
+        )
+    }
+
     ///Assumes root has color state.turn
-    pub fn minimax(&mut self, depth: u32) -> (Option<Move>, Evaluation) {
-        // println!("Enter minimax, depth {}", depth);
-        //todo!("crasht sobald es ein forced checkmate sieht. returnt normal, best_move wird nie gesetzt. #moves > 0");
+    pub fn minimax(
+        &mut self,
+        depth: u32,
+        transposition_table: &mut HashMap<u32, TranspositionEntry>,
+    ) -> (Option<Move>, Evaluation) {
         let mut best_move = None;
-        //alpha is the most positive eval that white is already assured of at this point
-        //beta is the most negative eval that black is already assured of at this point
-        //Root cannot cut branches! (Otherwise, what would be the point of having a tree?)
         let mut alpha = Evaluation::Mate(PieceColor::Black, 0);
         let mut beta = Evaluation::Mate(PieceColor::White, 0);
         let mut moves = 0;
         match self.turn {
-            //White is the maximizing player
             PieceColor::White => {
                 let mut best_score = Evaluation::Mate(PieceColor::Black, 0);
                 for m in self.generate_moves() {
-                    // println!("root: white try move {}", m);
-
-                    //Das ist nur sinnvoll, wenn klar ist, dass der Gegner das forced checkmate sieht.
-                    //Der verlierende Spieler würde dann einen zufälligen move spielen, weil sein Schicksal eh besiegelt ist.
-                    //Aber falls der Gegner nicht optimal spielt, wollen wir trotzdem den besten move finden!
-                    /*if alpha == i32::MAX || beta == i32::MIN {
-                        println!("forced checkmate, early return.");
-                        return (best_move, best_value);
-                    }*/
-
                     self.make(m);
-                    // self.draw_board(true);
-
+                    debug_assert_eq!(self.zobrist.hash, ZobristState::from_board_state(self).hash);
                     //It's now black's turn
                     //If this move didn't put white into check, recurse.
                     //If it did put white into check, ignore.
                     if !self.check(self.turn.opposite()) {
                         //In case of a forced checkmate sequence, just play the first
                         //LEGAL move (legal = does not put me in check)
-                        //is this still needed?
                         best_move.get_or_insert(m);
-                        // println!("root: didnt put white in check.");
-                        let score = self.minimax_helper(depth - 1, alpha, beta);
-
+                        let score =
+                            self.minimax_helper(depth - 1, alpha, beta, transposition_table);
                         moves += 1;
-
-                        //If score is checkmate for white: override best_score if
-
                         if score > best_score {
                             best_move = Some(m);
                             best_score = score;
-                            // println!("root: best value updated to: {}", best_value);
                         }
                         if score > alpha {
                             alpha = score;
-                            // println!("root: alpha updated to: {}", alpha);
                         }
-                    } else {
-                        // println!("root: but put white in check");
                     }
                     self.unmake();
                 }
-
                 //White has no legal moves in the original position
                 if moves == 0 {
                     if self.checkmate_given_zero_moves(PieceColor::Black) {
@@ -109,13 +102,11 @@ impl BoardState {
                         return (None, Evaluation::Draw);
                     }
                 }
-
                 //If only kings remain
                 if self.taken.len() == 30 {
                     println!("STALEMATE! THE GAME IS A DRAW!");
                     return (None, Evaluation::Draw);
                 }
-                //println!("Found {} legal moves", moves);
                 (best_move, best_score)
             }
 
@@ -124,18 +115,16 @@ impl BoardState {
                 let mut best_score = Evaluation::Mate(PieceColor::White, 0);
                 for m in self.generate_moves() {
                     // println!("root: black try move {}", m);
-                    /*if alpha == i32::MAX || beta == i32::MIN {
-                        println!("forced checkmate, early return.");
-                        return (best_move, best_value);
-                    }*/
                     self.make(m);
+                    debug_assert_eq!(self.zobrist.hash, ZobristState::from_board_state(self).hash);
                     // self.draw_board(true);
                     //It's now black's turn
                     //If this move didn't put white into check, recurse
                     if !self.check(self.turn.opposite()) {
                         best_move.get_or_insert(m);
                         // println!("root: didnt put black in check");
-                        let score = self.minimax_helper(depth - 1, alpha, beta);
+                        let score =
+                            self.minimax_helper(depth - 1, alpha, beta, transposition_table);
                         moves += 1;
                         if score < best_score {
                             best_move = Some(m);
@@ -146,8 +135,6 @@ impl BoardState {
                             beta = score;
                             // println!("root: beta updated to: {}", beta);
                         }
-                    } else {
-                        // println!("root: but put black in check");
                     }
                     self.unmake();
                 }
@@ -180,10 +167,42 @@ impl BoardState {
         depth: u32,
         mut alpha: Evaluation,
         mut beta: Evaluation,
+        transposition_table: &mut HashMap<u32, TranspositionEntry>,
     ) -> Evaluation {
         if depth == 0 {
-            let res = self.evaluate().increment_if_mate();
-            res
+            let eval = match transposition_table.get(&self.transposition_table_index()) {
+                Some(entry) => {
+                    if entry.zobrist_key == self.zobrist.hash {
+                        //println!("hit");
+                        entry.eval
+                    } else {
+                        let eval = self.evaluate();
+                        //Replacement scheme: Always
+                        let entry = TranspositionEntry::new(
+                            self.zobrist.hash,
+                            eval,
+                            EvaluationType::Exact,
+                            None,
+                        );
+                        transposition_table.insert(self.transposition_table_index(), entry);
+                        eval
+                    }
+                }
+                //todo: make it less ugly
+                None => {
+                    let eval = self.evaluate();
+                    let entry = TranspositionEntry::new(
+                        self.zobrist.hash,
+                        eval,
+                        EvaluationType::Exact,
+                        None,
+                    );
+                    transposition_table.insert(self.transposition_table_index(), entry);
+                    eval
+                }
+            };
+            //increment_if_mate nur vor returnen aufrufen. Im table ohne dem speichern.
+            eval.increment_if_mate()
         } else {
             let mut moves = 0;
             match self.turn {
@@ -199,12 +218,16 @@ impl BoardState {
                             return best_eval.increment_if_mate();
                         }
                         self.make(m);
-                        // self.draw_board(true);
+                        debug_assert_eq!(
+                            self.zobrist.hash,
+                            ZobristState::from_board_state(self).hash
+                        );
                         //It is now black's turn
                         //If this move didn't put white into check, recurse
                         if !self.check(self.turn.opposite()) {
                             // println!("{}: didnt put white in check", depth);
-                            let score = self.minimax_helper(depth - 1, alpha, beta);
+                            let score =
+                                self.minimax_helper(depth - 1, alpha, beta, transposition_table);
                             moves += 1;
                             if score > best_eval {
                                 best_eval = score;
@@ -234,12 +257,17 @@ impl BoardState {
                             return best_value.increment_if_mate();
                         }
                         self.make(m);
+                        debug_assert_eq!(
+                            self.zobrist.hash,
+                            ZobristState::from_board_state(self).hash
+                        );
                         // self.draw_board(true);
                         //It's now black's turn
                         //If this move didn't put white into check, recurse
                         if !self.check(self.turn.opposite()) {
                             // println!("{}: didnt put black in check", depth);
-                            let score = self.minimax_helper(depth - 1, alpha, beta);
+                            let score =
+                                self.minimax_helper(depth - 1, alpha, beta, transposition_table);
                             moves += 1;
                             if score < best_value {
                                 best_value = score;
@@ -264,18 +292,40 @@ impl BoardState {
     }
 
     ///Ensures minimax is only called with even depths. Never takes longer than time_limit.
+    /// This function keeps an internal transposition table that is preserved throughout all iterative calls
+    /// from this root position.
+    ///
+    /// Deeper searches order their moves based on results of shallower searches that are stored in the
+    /// transposition table, which enables alpha-beta-pruning to remove a lot more subtrees, thus
+    /// increasing the search speed.
     pub fn iterative_deepening(&self, time_limit_millis: u64) -> (Option<Move>, Evaluation) {
         let mut res = (None, Evaluation::Value(42)); //default not used because the loop always runs at least once
         let mut depth = 1; //Root is frontier node. All children (after all of root's possible moves) are evaluated with eval()
         let max_duration = Duration::from_millis(time_limit_millis);
         let start = Instant::now();
 
+        /*Transposition Table: Zobrist keys are 64 bits. A table with 2^64 entries is way too big to fit into memory, so
+        we modulo the key with the table size 2^20+7 to get the index. This leads to two types of collisions: Zobrist collisions
+        and index collisions. We avoid index collisions by storing the full 64 bit Zobrist key inside a TranspositionEntry object.
+        We don't have a way of avoiding Zobrist collisions and just hope they happen rarely. */
+
+        /*We want to keep the transposition table between loop iterations, since that is the whole point of using it.
+        However, since the minimax algorithm is run by a different thread, Rust doesn't allow us to simply use the table as if it
+        were running in a single-threaded environment. We don't want to copy the whole table between each iteration, so we use
+        a mutex. */
+
+        let table_lock = Arc::new(Mutex::new(
+            HashMap::<u32, TranspositionEntry>::with_capacity(TRANSPOSITION_TABLE_SIZE),
+        ));
+
         'outer: loop {
             let (sender, receiver) = mpsc::channel();
             let mut board_clone = self.clone();
+            let table_lock_clone = Arc::clone(&table_lock);
 
             thread::spawn(move || {
-                let worker_res = board_clone.minimax(depth);
+                let mut table = table_lock_clone.lock().unwrap();
+                let worker_res = board_clone.minimax(depth, &mut table);
                 sender.send(worker_res);
             });
 
@@ -511,12 +561,94 @@ impl BoardState {
         v
     }
 
+    fn make_zobrist(
+        &mut self,
+        m: Move,
+        moving_piece: Piece,
+        changed_castling_rights: &ChangedCastlingRights,
+    ) {
+        //Remove moving piece
+        self.zobrist.change_piece(m.from, moving_piece);
+
+        //Put moving piece on new square (hopefully this is correctly implemented for all moves lol)
+        match m.promotion {
+            //Might be a promotion move.
+            Some(promo) => self.zobrist.change_piece(m.to, promo),
+            None => self.zobrist.change_piece(m.to, moving_piece),
+        }
+
+        match m.move_type {
+            MoveType::Default => {}
+            MoveType::Capture => {
+                //Remove taken piece
+                if let Square::Full(target) = self.board.at(m.to.rank, m.to.file) {
+                    self.zobrist.change_piece(m.to, target);
+                } else {
+                    panic!("MoveType attack but empty target");
+                }
+            }
+            //Remove and put the rook if castling
+            MoveType::CastleKingside => match self.turn {
+                PieceColor::White => {
+                    self.zobrist
+                        .change_piece(Field::new(1, 8), Piece::rook(PieceColor::White));
+                    self.zobrist
+                        .change_piece(Field::new(1, 6), Piece::rook(PieceColor::White));
+                }
+                PieceColor::Black => {
+                    self.zobrist
+                        .change_piece(Field::new(8, 8), Piece::rook(PieceColor::Black));
+                    self.zobrist
+                        .change_piece(Field::new(8, 6), Piece::rook(PieceColor::Black));
+                }
+            },
+            MoveType::CastleQueenside => match self.turn {
+                PieceColor::White => {
+                    self.zobrist
+                        .change_piece(Field::new(1, 1), Piece::rook(PieceColor::White));
+                    self.zobrist
+                        .change_piece(Field::new(1, 4), Piece::rook(PieceColor::White));
+                }
+                PieceColor::Black => {
+                    self.zobrist
+                        .change_piece(Field::new(8, 1), Piece::rook(PieceColor::Black));
+                    self.zobrist
+                        .change_piece(Field::new(8, 4), Piece::rook(PieceColor::Black));
+                }
+            },
+        }
+
+        //Remove castling rights
+
+        if changed_castling_rights.white_king {
+            self.zobrist
+                .change_castling_rights(MoveType::CastleKingside, PieceColor::White);
+        }
+        if changed_castling_rights.white_queen {
+            self.zobrist
+                .change_castling_rights(MoveType::CastleQueenside, PieceColor::White);
+        }
+        if changed_castling_rights.black_king {
+            self.zobrist
+                .change_castling_rights(MoveType::CastleKingside, PieceColor::Black);
+        }
+        if changed_castling_rights.black_queen {
+            self.zobrist
+                .change_castling_rights(MoveType::CastleQueenside, PieceColor::Black);
+        }
+
+        //Change turn
+
+        self.zobrist.change_black_to_move();
+    }
+
     ///Assumes the move is fully legal!
     pub fn make(&mut self, m: Move) {
         self.moves.push(m);
+        let old_castling_rights = self.castling_rights.clone();
         if let Square::Full(moving_piece) = self.board.at(m.from.rank, m.from.file) {
             match m.move_type {
-                MoveType::Default => (),
+                MoveType::Default => {}
 
                 MoveType::Capture => {
                     if let Square::Full(target) = self.board.at(m.to.rank, m.to.file) {
@@ -604,6 +736,11 @@ impl BoardState {
                 _ => (),
             }
 
+            let changed_castling_rights =
+                ChangedCastlingRights::new(&old_castling_rights, &self.castling_rights);
+
+            self.make_zobrist(m, moving_piece, &changed_castling_rights);
+
             //The from square is now empty.
 
             self.board.set(m.from.rank, m.from.file, Square::Empty);
@@ -618,15 +755,12 @@ impl BoardState {
 
         self.turn = self.turn.opposite();
         self.ply += 1;
-        //println!("make end {}", m);
-        //Add the moves to self.moves, and if attacking move, add the taken piece to taken.
-        //Add castle and promotion to movetype (they are all mutually exclusive).
-        //If castle, restore or take away castling right for whose turn it is.
     }
 
     ///Unmakes the last move (the one at the end of the moves vec)
     pub fn unmake(&mut self) {
         //println!("unmake start");
+        //todo!("unmake zobrist");
         self.turn = self.turn.opposite();
         self.ply -= 1;
 
@@ -635,6 +769,7 @@ impl BoardState {
 
             if let Square::Full(moving_piece) = self.board.at(m.to.rank, m.to.file) {
                 self.board.set(m.to.rank, m.to.file, Square::Empty);
+                let castling_rights_before_unmake = self.castling_rights.clone();
 
                 //If it is a promoting move, the piece must have been a pawn before!
                 if m.promotion.is_some() {
@@ -716,8 +851,16 @@ impl BoardState {
                         self.castling_rights.black_queen_castle_lost_ply = None;
                     }
                 }
+
+                //To update the zobrist values for the unmake case, we first unmake the move. Then we pretend that we
+                //MAKE the move and update the zobrist values accordingly! Since the xor operation is symmetric, this has to have
+                //the same effect.
+                let changed_castling_rights = ChangedCastlingRights::new(
+                    &castling_rights_before_unmake,
+                    &self.castling_rights,
+                );
+                self.make_zobrist(m, moving_piece, &changed_castling_rights);
             } else {
-                self.draw(true);
                 panic!("No piece at destination in unmake");
             }
         } else {
@@ -1110,7 +1253,7 @@ pub struct Move {
 
 impl Move {
     const fn new(from: Field, to: Field, move_type: MoveType) -> Self {
-        Move {
+        Self {
             from,
             to,
             move_type,
@@ -1120,7 +1263,7 @@ impl Move {
 
     ///Generate a new move which may be a promotion (or not).
     const fn promotion(from: Field, to: Field, move_type: MoveType, promo: Option<Piece>) -> Self {
-        Move {
+        Self {
             from,
             to,
             move_type,
@@ -1585,6 +1728,30 @@ impl Piece {
     }
 }
 
+///None means no move has been stored, it does not imply checkmate!
+pub struct TranspositionEntry {
+    zobrist_key: u64,
+    eval: Evaluation,
+    eval_type: EvaluationType,
+    best_move: Option<Move>,
+}
+
+impl TranspositionEntry {
+    pub fn new(
+        zobrist_key: u64,
+        eval: Evaluation,
+        eval_type: EvaluationType,
+        best_move: Option<Move>,
+    ) -> Self {
+        Self {
+            zobrist_key,
+            eval,
+            eval_type,
+            best_move,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub enum Square {
     Full(Piece),
@@ -1649,6 +1816,30 @@ impl Display for Field {
             Board::number_to_file_letter(self.file as usize),
             self.rank
         )
+    }
+}
+
+#[derive(Debug)]
+///Used to store which castling rights have been lost by this move
+struct ChangedCastlingRights {
+    white_king: bool,
+    white_queen: bool,
+    black_king: bool,
+    black_queen: bool,
+}
+
+impl ChangedCastlingRights {
+    fn new(old: &CastlingRights, new: &CastlingRights) -> Self {
+        Self {
+            white_king: old.white_king_castle_lost_ply.is_none()
+                != new.white_king_castle_lost_ply.is_none(),
+            white_queen: old.white_queen_castle_lost_ply.is_none()
+                != new.white_queen_castle_lost_ply.is_none(),
+            black_king: old.black_king_castle_lost_ply.is_none()
+                != new.black_king_castle_lost_ply.is_none(),
+            black_queen: old.black_queen_castle_lost_ply.is_none()
+                != new.black_queen_castle_lost_ply.is_none(),
+        }
     }
 }
 
@@ -1738,7 +1929,7 @@ mod tests {
     #[test]
     fn mate_in_1_depth_1() {
         let mut b = BoardState::from_fen("1k6/ppp3Q1/8/8/8/8/6K1/8 w").unwrap();
-        let m = b.minimax(1);
+        let m = b.minimax_empty_table(1);
         assert!(m.1 == Evaluation::Mate(PieceColor::White, 1));
         b.make(m.0.unwrap());
         assert!(b.check(PieceColor::Black));
@@ -1748,7 +1939,7 @@ mod tests {
     #[test]
     fn mate_in_1_depth_2() {
         let mut b = BoardState::from_fen("1k6/ppp3Q1/8/8/8/8/6K1/8 w").unwrap();
-        let m = b.minimax(2);
+        let m = b.minimax_empty_table(2);
         println!("got {}, {:#?}", m.0.unwrap(), m.1);
         assert!(m.1 == Evaluation::Mate(PieceColor::White, 1));
         b.make(m.0.unwrap());
@@ -1761,7 +1952,7 @@ mod tests {
     #[test]
     fn mate_in_1_depth_3() {
         let mut b = BoardState::from_fen("1k6/ppp3Q1/8/8/8/8/6K1/8 w").unwrap();
-        let m = b.minimax(3);
+        let m = b.minimax_empty_table(3);
         assert!(m.1 == Evaluation::Mate(PieceColor::White, 1));
         b.make(m.0.unwrap());
         assert!(b.check(PieceColor::Black));
@@ -1783,14 +1974,14 @@ mod tests {
     #[test]
     fn mate_in_3_endgame() {
         let mut b = BoardState::from_fen("7R/2N1P3/8/8/8/8/k6K/8 w").unwrap();
-        let m = b.minimax(5);
+        let m = b.minimax_empty_table(5);
         assert_eq!(m.0.unwrap().to, Field::new(8, 2));
     }
 
     #[test]
     fn mate_in_3_with_rem_count() {
         let mut b = BoardState::from_fen("8/p1p2pp1/4k3/8/P1n2PPp/3K3P/3p4/1r6 b").unwrap();
-        let m = b.minimax(5);
+        let m = b.minimax_empty_table(5);
         assert_eq!(m.1, Evaluation::Mate(PieceColor::Black, 5));
     }
 

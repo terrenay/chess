@@ -17,6 +17,12 @@ pub enum Evaluation {
     Draw,
 }
 
+pub enum EvaluationType {
+    Exact,
+    UpperBound,
+    LowerBound,
+}
+
 impl Evaluation {
     fn draw_to_0(&self) -> Self {
         match self {
@@ -36,7 +42,8 @@ impl Evaluation {
 //Order: Mate(Black, 0) < Mate(Black, i) < any i32 < 0 = Draw < any i32 < Mate(White, i) < Mate(White, 0)
 //Black minimizes, White maximizes
 
-//Treat i32::MAX as checkmate for white, i32::MIN as checkmate for black, 0 as draw
+//Treat i32::MAX as checkmate for white, i32::MIN as checkmate for black, 0 as draw.
+//Todo: Should i32::MIN really be treated as mate for black? Or should that value be impossible?
 impl PartialEq for Evaluation {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
@@ -82,45 +89,21 @@ impl PartialOrd for Evaluation {
         let a = self.draw_to_0();
         let b = other.draw_to_0();
 
-        let res = match (a, b) {
-            (Mate(Black, 0), _) => Less,
-            (Mate(Black, i), Mate(Black, j)) => {
-                if i < j {
-                    Less
-                } else if i > j {
-                    Greater
-                } else {
-                    panic!()
-                }
-            }
-            (Mate(Black, _), _) => Less,
-            (_, Mate(Black, _)) => Greater,
-            (Value(left), Value(right)) => {
-                if left < right {
-                    Less
-                } else if left > right {
-                    Greater
-                } else {
-                    panic!()
-                }
-            }
-            (Mate(White, 0), _) => Greater,
-            (Mate(White, i), Mate(White, j)) => {
-                if i < j {
-                    Greater
-                } else if i > j {
-                    Less
-                } else {
-                    panic!()
-                }
-            }
-            (Mate(White, _), _) => Greater,
-            (_, Mate(White, _)) => Less,
+        match (a, b) {
+            (Mate(Black, 0), _) => Some(Less),
+            (_, Mate(Black, 0)) => Some(Greater),
+            (Mate(Black, i), Mate(Black, j)) => i.partial_cmp(&j),
+            (Mate(Black, _), _) => Some(Less),
+            (_, Mate(Black, _)) => Some(Greater),
+            (Value(left), Value(right)) => left.partial_cmp(&right),
+            (Mate(White, 0), _) => Some(Greater),
+            (_, Mate(White, 0)) => Some(Less),
+            (Mate(White, i), Mate(White, j)) => Some(i.partial_cmp(&j).unwrap().reverse()),
+            (Mate(White, _), _) => Some(Greater),
+            (_, Mate(White, _)) => Some(Less),
             (Draw, _) => panic!(),
             (_, Draw) => panic!(),
-        };
-
-        Some(res)
+        }
     }
 }
 
