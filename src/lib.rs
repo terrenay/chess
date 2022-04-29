@@ -5,7 +5,10 @@ mod zobrist;
 use std::{
     collections::HashMap,
     fmt::{self, Display},
-    sync::{mpsc, Arc, Mutex},
+    sync::{
+        mpsc::{self, Receiver},
+        Arc, Mutex,
+    },
     thread,
     time::{Duration, Instant},
 };
@@ -15,9 +18,9 @@ use evaluation::*;
 use ndarray::prelude::*;
 use zobrist::*;
 
-//const STARTING_POSITION: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq";
+const STARTING_POSITION: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq";
 //const STARTING_POSITION: &str = "rnbqkbnr/1p2pppp/p2p4/2p5/4P3/2N2N2/PPPP1PPP/R1BQKB1R w KQkq"; //Sicilian after opening
-const STARTING_POSITION: &str = "rn1qk2r/p1ppbppp/bp2pn2/8/2PP4/1P3NP1/P2BPP1P/RN1QKB1R w KQkq"; //Queens indian
+//const STARTING_POSITION: &str = "rn1qk2r/p1ppbppp/bp2pn2/8/2PP4/1P3NP1/P2BPP1P/RN1QKB1R w KQkq"; //Queens indian
 
 const TRANSPOSITION_TABLE_SIZE: usize = 1_048_583;
 
@@ -49,10 +52,12 @@ impl BoardState {
         evaluation::evaluate(self)
     }
 
-    pub fn minimax_empty_table(&mut self, depth: u32) -> (Option<Move>, Evaluation) {
+    pub fn minimax_standalone(&mut self, depth: u32) -> (Option<Move>, Evaluation) {
+        let (sender, receiver) = mpsc::channel();
         self.minimax(
             depth,
             &mut HashMap::<u32, TranspositionEntry>::with_capacity(TRANSPOSITION_TABLE_SIZE),
+            &receiver,
         )
     }
 
@@ -61,6 +66,7 @@ impl BoardState {
         &mut self,
         depth: u32,
         transposition_table: &mut HashMap<u32, TranspositionEntry>,
+        stop_receiver: &Receiver<bool>,
     ) -> (Option<Move>, Evaluation) {
         let mut best_move = None;
         let mut alpha = Evaluation::Mate(PieceColor::Black, 0);
@@ -68,8 +74,14 @@ impl BoardState {
         let mut moves = 0;
         match self.turn {
             PieceColor::White => {
-                let mut best_score = Evaluation::Mate(PieceColor::Black, 0);
+                let mut best_eval = Evaluation::Mate(PieceColor::Black, 0);
                 for m in self.generate_moves() {
+                    match stop_receiver.try_recv() {
+                        Err(mpsc::TryRecvError::Disconnected) | Ok(_) => {
+                            return (best_move, best_eval);
+                        }
+                        _ => (),
+                    }
                     self.make(m);
                     debug_assert_eq!(self.zobrist.hash, ZobristState::from_board_state(self).hash);
                     //It's now black's turn
@@ -79,12 +91,17 @@ impl BoardState {
                         //In case of a forced checkmate sequence, just play the first
                         //LEGAL move (legal = does not put me in check)
                         best_move.get_or_insert(m);
-                        let score =
-                            self.minimax_helper(depth - 1, alpha, beta, transposition_table);
+                        let score = self.minimax_helper(
+                            depth - 1,
+                            alpha,
+                            beta,
+                            transposition_table,
+                            stop_receiver,
+                        );
                         moves += 1;
-                        if score > best_score {
+                        if score > best_eval {
                             best_move = Some(m);
-                            best_score = score;
+                            best_eval = score;
                         }
                         if score > alpha {
                             alpha = score;
@@ -107,13 +124,19 @@ impl BoardState {
                     println!("STALEMATE! THE GAME IS A DRAW!");
                     return (None, Evaluation::Draw);
                 }
-                (best_move, best_score)
+                (best_move, best_eval)
             }
 
             //Black is the minimizing player
             PieceColor::Black => {
-                let mut best_score = Evaluation::Mate(PieceColor::White, 0);
+                let mut best_eval = Evaluation::Mate(PieceColor::White, 0);
                 for m in self.generate_moves() {
+                    match stop_receiver.try_recv() {
+                        Err(mpsc::TryRecvError::Disconnected) | Ok(_) => {
+                            return (best_move, best_eval);
+                        }
+                        _ => (),
+                    }
                     // println!("root: black try move {}", m);
                     self.make(m);
                     debug_assert_eq!(self.zobrist.hash, ZobristState::from_board_state(self).hash);
@@ -123,12 +146,17 @@ impl BoardState {
                     if !self.check(self.turn.opposite()) {
                         best_move.get_or_insert(m);
                         // println!("root: didnt put black in check");
-                        let score =
-                            self.minimax_helper(depth - 1, alpha, beta, transposition_table);
+                        let score = self.minimax_helper(
+                            depth - 1,
+                            alpha,
+                            beta,
+                            transposition_table,
+                            stop_receiver,
+                        );
                         moves += 1;
-                        if score < best_score {
+                        if score < best_eval {
                             best_move = Some(m);
-                            best_score = score;
+                            best_eval = score;
                             // println!("root: best value updated to: {}", best_value);
                         }
                         if score < beta {
@@ -154,7 +182,7 @@ impl BoardState {
                 }
 
                 //println!("Found {} legal moves", moves);
-                (best_move, best_score)
+                (best_move, best_eval)
             }
         }
     }
@@ -168,6 +196,7 @@ impl BoardState {
         mut alpha: Evaluation,
         mut beta: Evaluation,
         transposition_table: &mut HashMap<u32, TranspositionEntry>,
+        stop_receiver: &Receiver<bool>,
     ) -> Evaluation {
         if depth == 0 {
             let eval = match transposition_table.get(&self.transposition_table_index()) {
@@ -210,6 +239,12 @@ impl BoardState {
                 PieceColor::White => {
                     let mut best_eval = Evaluation::Mate(PieceColor::Black, 0);
                     for m in self.generate_moves() {
+                        match stop_receiver.try_recv() {
+                            Err(mpsc::TryRecvError::Disconnected) | Ok(_) => {
+                                return best_eval;
+                            }
+                            _ => (),
+                        }
                         // println!("{}: white try move {}", depth, m);
                         //Branch cut: Don't explore this subtree further if it is already
                         //obvious that this variant will not be taken.
@@ -226,8 +261,13 @@ impl BoardState {
                         //If this move didn't put white into check, recurse
                         if !self.check(self.turn.opposite()) {
                             // println!("{}: didnt put white in check", depth);
-                            let score =
-                                self.minimax_helper(depth - 1, alpha, beta, transposition_table);
+                            let score = self.minimax_helper(
+                                depth - 1,
+                                alpha,
+                                beta,
+                                transposition_table,
+                                stop_receiver,
+                            );
                             moves += 1;
                             if score > best_eval {
                                 best_eval = score;
@@ -249,12 +289,18 @@ impl BoardState {
                 }
                 //Black is the minimizing player
                 PieceColor::Black => {
-                    let mut best_value = Evaluation::Mate(PieceColor::White, 0);
+                    let mut best_eval = Evaluation::Mate(PieceColor::White, 0);
                     for m in self.generate_moves() {
+                        match stop_receiver.try_recv() {
+                            Err(mpsc::TryRecvError::Disconnected) | Ok(_) => {
+                                return best_eval;
+                            }
+                            _ => (),
+                        }
                         // println!("{}: black try move {}", depth, m);
                         if beta <= alpha {
                             // println!("beta <= alpha: return");
-                            return best_value.increment_if_mate();
+                            return best_eval.increment_if_mate();
                         }
                         self.make(m);
                         debug_assert_eq!(
@@ -266,11 +312,16 @@ impl BoardState {
                         //If this move didn't put white into check, recurse
                         if !self.check(self.turn.opposite()) {
                             // println!("{}: didnt put black in check", depth);
-                            let score =
-                                self.minimax_helper(depth - 1, alpha, beta, transposition_table);
+                            let score = self.minimax_helper(
+                                depth - 1,
+                                alpha,
+                                beta,
+                                transposition_table,
+                                stop_receiver,
+                            );
                             moves += 1;
-                            if score < best_value {
-                                best_value = score;
+                            if score < best_eval {
+                                best_eval = score;
                                 // println!("{}: best value updated to: {}", depth, best_value);
                             }
                             if score < beta {
@@ -283,9 +334,9 @@ impl BoardState {
                     if (moves == 0 && !self.checkmate_given_zero_moves(PieceColor::White))
                         || self.taken.len() == 30
                     {
-                        best_value = Evaluation::Draw;
+                        best_eval = Evaluation::Draw;
                     }
-                    best_value.increment_if_mate()
+                    best_eval.increment_if_mate()
                 }
             }
         }
@@ -314,33 +365,46 @@ impl BoardState {
         were running in a single-threaded environment. We don't want to copy the whole table between each iteration, so we use
         a mutex. */
 
+        /*Problem: One table needs about 60MB. Once the master threads times out, the worker thread is NOT killed but
+        continues running in the background (but its result is finally discarded) - which wastes CPU and RAM.
+        I need to somehow signal to the minimax thread when it is allowed to stop.*/
+
         let table_lock = Arc::new(Mutex::new(
             HashMap::<u32, TranspositionEntry>::with_capacity(TRANSPOSITION_TABLE_SIZE),
         ));
 
         'outer: loop {
             let (sender, receiver) = mpsc::channel();
+            let (stop_sender, stop_receiver) = mpsc::channel();
             let mut board_clone = self.clone();
             let table_lock_clone = Arc::clone(&table_lock);
 
             thread::spawn(move || {
                 let mut table = table_lock_clone.lock().unwrap();
-                let worker_res = board_clone.minimax(depth, &mut table);
+                let worker_res = board_clone.minimax(depth, &mut table, &stop_receiver);
                 sender.send(worker_res);
             });
 
             loop {
                 if start.elapsed() >= max_duration && depth > 1 {
+                    stop_sender.send(true);
                     break 'outer;
                 }
 
                 if let Ok(worker_res) = receiver.try_recv() {
                     res = worker_res;
+                    let table = Arc::clone(&table_lock);
+                    let table = table.lock().unwrap();
                     println!(
-                        "Depth {} gives {} with an expected eval of {:#?}",
+                        "Depth {} gives {} with an expected eval of {:#?}.",
                         depth,
                         res.0.unwrap(),
                         res.1
+                    );
+                    println!(
+                        "After depth {}, transposition table contains {} entries.\n",
+                        depth,
+                        table.len()
                     );
                     break;
                 }
@@ -558,6 +622,10 @@ impl BoardState {
             }
         }
         v = self.avoid_touching_kings(v);
+        //captures ganz nach vorne
+        //sekundär nach pieces sortieren (pawn, minor, major, king).
+        //also nach MoveType::reverse(), falls gleich dann nach PieceKind
+        //v.sort_unstable();
         v
     }
 
@@ -1272,6 +1340,13 @@ impl Move {
     }
 }
 
+impl PartialEq for Move {
+    fn eq(&self, other: &Self) -> bool {
+        todo!("nicht so! ich will nicht moves vergleichen. zwei moves sollten wirklich nur gleich sein, wenn sie auch an die
+        gleiche stelle hüpfen. ich will einen anderen order definieren, der nur movetype und piecekind berücksichtigt.")
+    }
+}
+
 impl Display for Move {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}{}", self.from, self.to)
@@ -1313,9 +1388,9 @@ impl Board {
             Square::Full(p) => match p.kind {
                 PieceKind::Pawn => Ok(self.pseudo_legal_pawn_moves(p.color, from)),
                 PieceKind::Knight => Ok(self.pseudo_legal_knight_moves(p.color, from)),
+                PieceKind::Bishop => Ok(self.pseudo_legal_bishop_moves(p.color, from)),
                 PieceKind::King => Ok(self.pseudo_legal_king_moves(p.color, from)),
                 PieceKind::Rook => Ok(self.pseudo_legal_rook_moves(p.color, from)),
-                PieceKind::Bishop => Ok(self.pseudo_legal_bishop_moves(p.color, from)),
                 PieceKind::Queen => Ok(self.pseudo_legal_queen_moves(p.color, from)),
             },
             _ => Err(Error::NoPieceOnField(Field::new(rank, file))),
@@ -1929,7 +2004,7 @@ mod tests {
     #[test]
     fn mate_in_1_depth_1() {
         let mut b = BoardState::from_fen("1k6/ppp3Q1/8/8/8/8/6K1/8 w").unwrap();
-        let m = b.minimax_empty_table(1);
+        let m = b.minimax_standalone(1);
         assert!(m.1 == Evaluation::Mate(PieceColor::White, 1));
         b.make(m.0.unwrap());
         assert!(b.check(PieceColor::Black));
@@ -1939,7 +2014,7 @@ mod tests {
     #[test]
     fn mate_in_1_depth_2() {
         let mut b = BoardState::from_fen("1k6/ppp3Q1/8/8/8/8/6K1/8 w").unwrap();
-        let m = b.minimax_empty_table(2);
+        let m = b.minimax_standalone(2);
         println!("got {}, {:#?}", m.0.unwrap(), m.1);
         assert!(m.1 == Evaluation::Mate(PieceColor::White, 1));
         b.make(m.0.unwrap());
@@ -1952,7 +2027,7 @@ mod tests {
     #[test]
     fn mate_in_1_depth_3() {
         let mut b = BoardState::from_fen("1k6/ppp3Q1/8/8/8/8/6K1/8 w").unwrap();
-        let m = b.minimax_empty_table(3);
+        let m = b.minimax_standalone(3);
         assert!(m.1 == Evaluation::Mate(PieceColor::White, 1));
         b.make(m.0.unwrap());
         assert!(b.check(PieceColor::Black));
@@ -1974,14 +2049,14 @@ mod tests {
     #[test]
     fn mate_in_3_endgame() {
         let mut b = BoardState::from_fen("7R/2N1P3/8/8/8/8/k6K/8 w").unwrap();
-        let m = b.minimax_empty_table(5);
+        let m = b.minimax_standalone(5);
         assert_eq!(m.0.unwrap().to, Field::new(8, 2));
     }
 
     #[test]
     fn mate_in_3_with_rem_count() {
         let mut b = BoardState::from_fen("8/p1p2pp1/4k3/8/P1n2PPp/3K3P/3p4/1r6 b").unwrap();
-        let m = b.minimax_empty_table(5);
+        let m = b.minimax_standalone(5);
         assert_eq!(m.1, Evaluation::Mate(PieceColor::Black, 5));
     }
 

@@ -32,7 +32,7 @@ fn main() {
                 b.make(m);
                 b.draw(true);
                 println!("-- BLACK TO MOVE --");
-                let m = b.iterative_deepening(4000).0;
+                let m = b.iterative_deepening(5000).0;
                 if m.is_none() {
                     return;
                 }
@@ -65,7 +65,7 @@ fn main() {
                             "BLACK IN CHECK (before black's move): {}",
                             b.check(PieceColor::Black).to_string().red()
                         );
-                        let m = b.iterative_deepening(1000).0;
+                        let m = b.iterative_deepening(5_000).0;
                         if m.is_none() {
                             return;
                         }
