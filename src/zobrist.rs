@@ -112,16 +112,19 @@ impl ZobristState {
 
     ///Call this function for every piece that is initially present.
     pub fn change_piece(&mut self, field: Field, piece: Piece) {
+        // eprintln!("change piece {} {:?}", field, piece);
         self.hash ^= self.values.get(field, piece);
     }
 
     ///If white to move initially, do not call this function.
     pub fn change_black_to_move(&mut self) {
+        // eprintln!("change turn color");
         self.hash ^= self.values.black_to_move;
     }
 
     ///Only call this function for LOST castling rights!
     pub fn change_castling_rights(&mut self, move_type: MoveType, color: PieceColor) {
+        // eprintln!("change castling rights {:?} {}", move_type, color);
         self.hash ^= match move_type {
             MoveType::CastleKingside => match color {
                 PieceColor::White => self.values.white_king_castle_rights,
