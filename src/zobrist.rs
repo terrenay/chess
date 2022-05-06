@@ -25,6 +25,7 @@ impl ZobristValues {
 
         let mut piece_at = [[[0; 8]; 8]; 12];
 
+        #[allow(clippy::needless_range_loop)]
         for piece in 0..12 {
             for rank in 0..8 {
                 for file in 0..8 {

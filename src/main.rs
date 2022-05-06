@@ -21,20 +21,25 @@ fn main() {
                 }
                 count += 1;
                 println!("-- WHITE TO MOVE --");
+                //let m = b.minimax_standalone(6).0;
                 let m = b.iterative_deepening(5000).0;
                 if m.is_none() {
                     return;
                 }
                 let m = m.unwrap();
-                b.make(m);
+                b.make(&m);
                 b.draw(true);
+                //println!("{:?}", b.hash_history);
                 println!("-- BLACK TO MOVE --");
+                //let m = b.minimax_standalone(6).0;
                 let m = b.iterative_deepening(5000).0;
                 if m.is_none() {
                     return;
                 }
-                b.make(m.unwrap());
+                let m = m.unwrap();
+                b.make(&m);
                 b.draw(true);
+                //println!("{:?}", b.hash_history);
             }
         }
         "h" => {
@@ -62,7 +67,8 @@ fn main() {
                         if m.is_none() {
                             return;
                         }
-                        b.make(m.unwrap());
+                        let m = m.unwrap();
+                        b.make(&m);
                         b.draw(true);
                     }
                     Err(e) => eprintln!("{}", e.to_string().red()),

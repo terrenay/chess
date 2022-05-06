@@ -33,6 +33,7 @@ pub struct BoardState {
     zobrist: ZobristState,
     moves: Vec<Move>,
     pub taken: Vec<Piece>,
+    pub hash_history: Vec<u64>,
 }
 
 impl BoardState {
@@ -53,7 +54,7 @@ impl BoardState {
     }
 
     pub fn minimax_standalone(&mut self, depth: u32) -> (Option<Move>, Evaluation) {
-        let (sender, receiver) = mpsc::channel();
+        let (_, receiver) = mpsc::channel();
         self.minimax(
             depth,
             &mut HashMap::<u32, TranspositionEntry>::with_capacity(TRANSPOSITION_TABLE_SIZE),
@@ -75,24 +76,31 @@ impl BoardState {
         match self.turn {
             PieceColor::White => {
                 let mut best_eval = Evaluation::Mate(PieceColor::Black, 0);
-                for m in self.generate_moves() {
+                for m in self.generate_moves(true) {
+                    //todo: borrow this generated move as much as possible, don't copy it around! It's now on the heap (in a vector), so we can refer to it.
                     match stop_receiver.try_recv() {
                         Err(mpsc::TryRecvError::Disconnected) | Ok(_) => {
                             return (best_move, best_eval);
                         }
                         _ => (),
                     }
-                    self.make(m);
+                    self.make(&m);
                     debug_assert_eq!(self.zobrist.hash, ZobristState::from_board_state(self).hash);
                     if !self.check(self.turn.opposite()) {
-                        best_move.get_or_insert(m);
-                        let score = self.minimax_helper(
-                            depth - 1,
-                            alpha,
-                            beta,
-                            transposition_table,
-                            stop_receiver,
-                        );
+                        best_move.get_or_insert(m.clone());
+                        let score = if self.threefold_repetition() {
+                            //println!("3f rep in root");
+                            //Evaluation::Draw
+                            panic!()
+                        } else {
+                            self.minimax_helper(
+                                depth - 1,
+                                alpha,
+                                beta,
+                                transposition_table,
+                                stop_receiver,
+                            )
+                        };
                         moves += 1;
                         if score > best_eval {
                             best_move = Some(m);
@@ -123,27 +131,33 @@ impl BoardState {
             //Black is the minimizing player
             PieceColor::Black => {
                 let mut best_eval = Evaluation::Mate(PieceColor::White, 0);
-                for m in self.generate_moves() {
+                for m in self.generate_moves(true) {
                     match stop_receiver.try_recv() {
                         Err(mpsc::TryRecvError::Disconnected) | Ok(_) => {
                             return (best_move, best_eval);
                         }
                         _ => (),
                     }
-                    self.make(m);
+                    self.make(&m);
                     debug_assert_eq!(self.zobrist.hash, ZobristState::from_board_state(self).hash);
                     if !self.check(self.turn.opposite()) {
-                        best_move.get_or_insert(m);
-                        let score = self.minimax_helper(
-                            depth - 1,
-                            alpha,
-                            beta,
-                            transposition_table,
-                            stop_receiver,
-                        );
+                        best_move.get_or_insert(m.clone());
+                        let score = if self.threefold_repetition() {
+                            // println!("3f rep in root");
+                            //Evaluation::Draw
+                            panic!()
+                        } else {
+                            self.minimax_helper(
+                                depth - 1,
+                                alpha,
+                                beta,
+                                transposition_table,
+                                stop_receiver,
+                            )
+                        };
                         moves += 1;
                         if score < best_eval {
-                            best_move = Some(m);
+                            best_move = Some(m.clone());
                             best_eval = score;
                         }
                         if score < beta {
@@ -182,45 +196,14 @@ impl BoardState {
         stop_receiver: &Receiver<bool>,
     ) -> Evaluation {
         if depth == 0 {
-            let eval = match transposition_table.get(&self.transposition_table_index()) {
-                Some(entry) => {
-                    if entry.zobrist_key == self.zobrist.hash {
-                        entry.eval
-                    } else {
-                        let eval = self.evaluate();
-                        //Replacement scheme: Always
-                        let entry = TranspositionEntry::new(
-                            self.zobrist.hash,
-                            eval,
-                            EvaluationType::Exact,
-                            None,
-                        );
-                        transposition_table.insert(self.transposition_table_index(), entry);
-                        eval
-                    }
-                }
-                //todo: make it less ugly
-                None => {
-                    let eval = self.evaluate();
-                    let entry = TranspositionEntry::new(
-                        self.zobrist.hash,
-                        eval,
-                        EvaluationType::Exact,
-                        None,
-                    );
-                    transposition_table.insert(self.transposition_table_index(), entry);
-                    eval
-                }
-            };
-            //increment_if_mate nur vor returnen aufrufen. Im table ohne dem speichern.
-            eval.increment_if_mate()
+            self.quiescent_search(alpha, beta, transposition_table, stop_receiver)
         } else {
             let mut moves = 0;
             match self.turn {
                 //White is the maximizing player
                 PieceColor::White => {
                     let mut best_eval = Evaluation::Mate(PieceColor::Black, 0);
-                    for m in self.generate_moves() {
+                    for m in self.generate_moves(depth > 3) {
                         match stop_receiver.try_recv() {
                             Err(mpsc::TryRecvError::Disconnected) | Ok(_) => {
                                 return best_eval;
@@ -234,19 +217,25 @@ impl BoardState {
                             // println!("beta <= alpha: return");
                             return best_eval.increment_if_mate();
                         }
-                        self.make(m);
+                        self.make(&m);
                         debug_assert_eq!(
                             self.zobrist.hash,
                             ZobristState::from_board_state(self).hash
                         );
                         if !self.check(self.turn.opposite()) {
-                            let score = self.minimax_helper(
-                                depth - 1,
-                                alpha,
-                                beta,
-                                transposition_table,
-                                stop_receiver,
-                            );
+                            let score = if self.threefold_repetition() {
+                                //println!("3f rep in helper");
+
+                                Evaluation::Draw
+                            } else {
+                                self.minimax_helper(
+                                    depth - 1,
+                                    alpha,
+                                    beta,
+                                    transposition_table,
+                                    stop_receiver,
+                                )
+                            };
                             moves += 1;
                             if score > best_eval {
                                 best_eval = score;
@@ -267,7 +256,7 @@ impl BoardState {
                 //Black is the minimizing player
                 PieceColor::Black => {
                     let mut best_eval = Evaluation::Mate(PieceColor::White, 0);
-                    for m in self.generate_moves() {
+                    for m in self.generate_moves(depth > 3) {
                         match stop_receiver.try_recv() {
                             Err(mpsc::TryRecvError::Disconnected) | Ok(_) => {
                                 return best_eval;
@@ -278,19 +267,25 @@ impl BoardState {
                             // println!("beta <= alpha: return");
                             return best_eval.increment_if_mate();
                         }
-                        self.make(m);
+                        self.make(&m);
                         debug_assert_eq!(
                             self.zobrist.hash,
                             ZobristState::from_board_state(self).hash
                         );
                         if !self.check(self.turn.opposite()) {
-                            let score = self.minimax_helper(
-                                depth - 1,
-                                alpha,
-                                beta,
-                                transposition_table,
-                                stop_receiver,
-                            );
+                            let score = if self.threefold_repetition() {
+                                // println!("3f rep in helper");
+
+                                Evaluation::Draw
+                            } else {
+                                self.minimax_helper(
+                                    depth - 1,
+                                    alpha,
+                                    beta,
+                                    transposition_table,
+                                    stop_receiver,
+                                )
+                            };
                             moves += 1;
                             if score < best_eval {
                                 best_eval = score;
@@ -358,7 +353,7 @@ impl BoardState {
             loop {
                 //|| matches!(res.1, Evaluation::Mate(_, _))
                 if start.elapsed() >= max_duration && depth > 1 {
-                    stop_sender.send(true);
+                    stop_sender.send(true).unwrap();
                     break 'outer;
                 }
 
@@ -369,7 +364,7 @@ impl BoardState {
                     println!(
                         "Depth {} gives {} with an expected eval of {:#?}.",
                         depth,
-                        res.0.unwrap(),
+                        res.0.clone().unwrap(),
                         res.1
                     );
                     //todo!("abbrechen wenn mate gefunden");
@@ -474,6 +469,12 @@ impl BoardState {
         }
     }*/
 
+    ///True if the last move leads to a threefold repetition. Might return true even though there is no threefold repetition.
+    fn threefold_repetition(&self) -> bool {
+        let last = self.hash_history.last().unwrap();
+        self.hash_history.iter().filter(|&n| n == last).count() >= 3
+    }
+
     ///Move piece by string like "e2e4". Checks for pseudo-legality.
     pub fn move_by_str(&mut self, arg: &str) -> Result<(), Error> {
         println!("\nTry to process input: {}", arg);
@@ -524,7 +525,7 @@ impl BoardState {
         }
 
         if let Some(m) = v {
-            self.make(m);
+            self.make(&m);
             if self.check(self.turn.opposite()) {
                 println!("You're in check!");
                 self.unmake();
@@ -573,7 +574,7 @@ impl BoardState {
         println!("EVALUATION: {}", self.evaluate());*/
     }
 
-    pub fn generate_moves(&self) -> Vec<Move> {
+    pub fn generate_moves(&self, sort: bool) -> Vec<Move> {
         //Going through all fields, checking whether there is a piece, then calling
         //pseudo_legal_moves feels quite inefficient...
 
@@ -594,20 +595,21 @@ impl BoardState {
             }
         }
         v = self.avoid_touching_kings(v);
-        //captures ganz nach vorne
-        //sekundär nach pieces sortieren (pawn, minor, major, king).
-        //also nach MoveType::reverse(), falls gleich dann nach PieceKind
-        //v.sort_unstable();
+        /*Im early bis midgame pawn-bishop-knight-queen-rook-king.
+        Nur bei root sortieren (in jedem child sortieren braucht zu viel zeit für wenig
+        benefit. dort nur vorherige best moves aus transposition table berücksichtigen.) */
+        if sort {
+            v.sort();
+        }
         v
     }
 
-    ///Behaviour for unmaking is only different for a promotion move, because moving_piece is NOT a pawn!
+    ///Only called in make. To unmake the hash, we just pop the last value from the hash history.
     fn make_zobrist(
         &mut self,
-        m: Move,
+        m: &Move,
         moving_piece: Piece,
         changed_castling_rights: &ChangedCastlingRights,
-        unmake: bool,
     ) {
         //Put moving piece on new square and remove moving piece.
         //In a promotion move, moving_piece is a queen, which is important when unmaking since we have to place a pawn
@@ -692,8 +694,8 @@ impl BoardState {
     }
 
     ///Assumes the move is fully legal!
-    pub fn make(&mut self, m: Move) {
-        self.moves.push(m);
+    pub fn make(&mut self, m: &Move) {
+        self.moves.push(m.clone());
         let old_castling_rights = self.castling_rights.clone();
         if let Square::Full(moving_piece) = self.board.at(m.from.rank, m.from.file) {
             match m.move_type {
@@ -789,7 +791,9 @@ impl BoardState {
                 ChangedCastlingRights::new(&old_castling_rights, &self.castling_rights);
 
             //eprintln!("make calles make_zobrist");
-            self.make_zobrist(m, moving_piece, &changed_castling_rights, false);
+            self.make_zobrist(m, moving_piece, &changed_castling_rights);
+
+            self.hash_history.push(self.zobrist.hash);
 
             //The from square is now empty.
 
@@ -817,7 +821,6 @@ impl BoardState {
 
             if let Square::Full(moving_piece) = self.board.at(m.to.rank, m.to.file) {
                 self.board.set(m.to.rank, m.to.file, Square::Empty);
-                let castling_rights_before_unmake = self.castling_rights.clone();
 
                 //If it is a promoting move, the piece must have been a pawn before!
                 if m.promotion.is_some() {
@@ -903,12 +906,8 @@ impl BoardState {
                 //To update the zobrist values for the unmake case, we first unmake the move. Then we pretend that we
                 //MAKE the move and update the zobrist values accordingly! Since the xor operation is symmetric, this has to have
                 //the same effect.
-                let changed_castling_rights = ChangedCastlingRights::new(
-                    &castling_rights_before_unmake,
-                    &self.castling_rights,
-                );
-                //eprintln!("unmake calls make_zobrist");
-                self.make_zobrist(m, moving_piece, &changed_castling_rights, true);
+                self.hash_history.pop();
+                self.zobrist.hash = *self.hash_history.last().unwrap();
             } else {
                 panic!("No piece at destination in unmake");
             }
@@ -981,6 +980,7 @@ impl BoardState {
     ///Returns all valid castling moves of player whose turn it currently is.
     fn castling_moves(&self) -> Vec<Move> {
         let mut v = vec![];
+        let piece = Piece::king(self.turn);
         //Check cheap conditions (empty, castling rights) first, then expensive (threatened)
 
         if self.turn == PieceColor::White {
@@ -994,6 +994,7 @@ impl BoardState {
                 v.push(Move::new(
                     Field::new(1, 5),
                     Field::new(1, 7),
+                    piece,
                     MoveType::CastleKingside,
                 ));
             }
@@ -1008,6 +1009,7 @@ impl BoardState {
                 v.push(Move::new(
                     Field::new(1, 5),
                     Field::new(1, 3),
+                    piece,
                     MoveType::CastleQueenside,
                 ));
             }
@@ -1023,6 +1025,7 @@ impl BoardState {
                 v.push(Move::new(
                     Field::new(8, 5),
                     Field::new(8, 7),
+                    piece,
                     MoveType::CastleKingside,
                 ));
             }
@@ -1037,6 +1040,7 @@ impl BoardState {
                 v.push(Move::new(
                     Field::new(8, 5),
                     Field::new(8, 3),
+                    piece,
                     MoveType::CastleQueenside,
                 ));
             }
@@ -1092,7 +1096,7 @@ impl BoardState {
                 };
 
                 if show_prev {
-                    if let Some(&last) = self.moves.last() {
+                    if let Some(last) = self.moves.last() {
                         if last.from == field || last.to == field {
                             tile = tile.on_truecolor(122, 156, 70);
                         }
@@ -1173,7 +1177,7 @@ impl BoardState {
                 ' ' => break,
                 _ => return Err(Error::Parse),
             }
-            if rank < 1 || rank > 8 || file < 1 || file > 8 {
+            if !(1..=8).contains(&rank) || !(1..=8).contains(&file) {
                 println!("rank={}, file={}", rank, file);
                 return Err(Error::Parse);
             }
@@ -1215,6 +1219,8 @@ impl BoardState {
 
         let zobrist = ZobristState::from(&board, turn, &castling_rights);
 
+        let hashes = vec![zobrist.hash];
+
         Ok(Self {
             board,
             turn,
@@ -1223,7 +1229,48 @@ impl BoardState {
             zobrist,
             moves: vec![],
             taken: vec![],
+            hash_history: hashes,
         })
+    }
+
+    ///Only call this function at horizon nodes.
+    ///
+    ///Avoid the horizon effect. If there is an ongoing trade at a horizon node (eg: queen captures a pawn at horizon, but
+    /// the queen could be recaptured one move beyond the horizon), search deeper until the position becomes quiet.
+    ///
+    /// This is implemented by generating all captures in the current position. If the capture could significantly change the
+    /// evaluation, we recursively generate all possible captures in the following position.
+    ///
+    /// Captures may be ignored if it is highly unlikely that they would be beneficial (eg: queen captures pawn).
+    fn quiescent_search(
+        &mut self,
+        alpha: Evaluation,
+        beta: Evaluation,
+        transposition_table: &mut HashMap<u32, TranspositionEntry>,
+        stop_receiver: &Receiver<bool>,
+    ) -> Evaluation {
+        let eval = match transposition_table.get(&self.transposition_table_index()) {
+            Some(entry) => {
+                if entry.zobrist_key == self.zobrist.hash {
+                    entry.eval
+                } else {
+                    let eval = self.evaluate();
+                    //Replacement scheme: Always
+                    let entry = TranspositionEntry::new(self.zobrist.hash, eval);
+                    transposition_table.insert(self.transposition_table_index(), entry);
+                    eval
+                }
+            }
+            //todo: make it less ugly
+            None => {
+                let eval = self.evaluate();
+                let entry = TranspositionEntry::new(self.zobrist.hash, eval);
+                transposition_table.insert(self.transposition_table_index(), entry);
+                eval
+            }
+        };
+        //increment_if_mate nur vor returnen aufrufen. Im table ohne dem speichern.
+        eval.increment_if_mate()
     }
 }
 
@@ -1290,39 +1337,65 @@ impl Default for BoardState {
 
 ///If move_type==Castle, from must contain the king's position!
 /// to is ignored.
-#[derive(Copy, Clone)]
+/// todo: use piece in more places instead of calling at() with the from field.
+#[derive(Clone, PartialEq, Eq)]
 pub struct Move {
     pub from: Field,
     pub to: Field,
+    piece: Piece,
     move_type: MoveType,
     promotion: Option<Piece>,
 }
 
 impl Move {
-    const fn new(from: Field, to: Field, move_type: MoveType) -> Self {
+    const fn new(from: Field, to: Field, piece: Piece, move_type: MoveType) -> Self {
         Self {
             from,
             to,
+            piece,
             move_type,
             promotion: None,
         }
     }
 
     ///Generate a new move which may be a promotion (or not).
-    const fn promotion(from: Field, to: Field, move_type: MoveType, promo: Option<Piece>) -> Self {
+    const fn promotion(
+        from: Field,
+        to: Field,
+        piece: Piece,
+        move_type: MoveType,
+        promo: Option<Piece>,
+    ) -> Self {
         Self {
             from,
             to,
+            piece,
             move_type,
             promotion: promo,
         }
     }
 }
 
-impl PartialEq for Move {
-    fn eq(&self, other: &Self) -> bool {
-        todo!("nicht so! ich will nicht moves vergleichen. zwei moves sollten wirklich nur gleich sein, wenn sie auch an die
-        gleiche stelle hüpfen. ich will einen anderen order definieren, der nur movetype und piecekind berücksichtigt.")
+impl PartialOrd for Move {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        use std::cmp::Ordering::*;
+        use MoveType::*;
+        match (self.move_type, other.move_type) {
+            (Capture, Capture) => self.piece.partial_cmp(&other.piece),
+            (Capture, _) => Some(Less),
+            (_, Capture) => Some(Greater),
+            _ => match (self.promotion, other.promotion) {
+                (Some(_), None) => Some(Less),
+                (None, Some(_)) => Some(Greater),
+                _ => self.piece.partial_cmp(&other.piece),
+            },
+        }
+    }
+}
+
+impl Ord for Move {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.partial_cmp(other).unwrap()
     }
 }
 
@@ -1382,6 +1455,7 @@ impl Board {
         let promotion_rank;
         let move_offset;
         let opposite_color = color.opposite();
+        let pawn = Piece::pawn(color);
 
         match color {
             PieceColor::White => {
@@ -1404,6 +1478,7 @@ impl Board {
                 standard_moves.push(Move::promotion(
                     from,
                     Field::new(rank + move_offset, file),
+                    pawn,
                     MoveType::Default,
                     if rank == promotion_rank {
                         Some(Piece::queen(color))
@@ -1419,6 +1494,7 @@ impl Board {
                         standard_moves.push(Move::new(
                             from,
                             Field::new(rank + 2 * move_offset, file),
+                            pawn,
                             MoveType::Default,
                         ));
                     }
@@ -1434,6 +1510,7 @@ impl Board {
                 moves.push(Move::promotion(
                     from,
                     Field::new(rank + move_offset, file - 1),
+                    pawn,
                     MoveType::Capture,
                     if rank == promotion_rank {
                         Some(Piece::queen(color))
@@ -1451,6 +1528,7 @@ impl Board {
                 moves.push(Move::promotion(
                     from,
                     Field::new(rank + move_offset, file + 1),
+                    pawn,
                     MoveType::Capture,
                     if rank == promotion_rank {
                         Some(Piece::queen(color))
@@ -1476,7 +1554,7 @@ impl Board {
             Field::new(rank - 1, file - 2),
             Field::new(rank + 1, file - 2),
         ];
-        self.filter_free_or_opponent(from, v, color.opposite())
+        self.filter_free_or_opponent(from, v, Piece::knight(color))
     }
 
     fn pseudo_legal_king_moves(&self, color: PieceColor, from: Field) -> Vec<Move> {
@@ -1491,37 +1569,38 @@ impl Board {
             Field::new(rank - 1, file - 1),
             Field::new(rank, file - 1),
         ];
-        self.filter_free_or_opponent(from, v, color.opposite())
+        self.filter_free_or_opponent(from, v, Piece::king(color))
     }
 
     fn pseudo_legal_rook_moves(&self, color: PieceColor, from: Field) -> Vec<Move> {
         let Field { rank, file } = from;
+        let piece = Piece::rook(color);
         //Upwards
         let mut v = vec![];
         for i in rank + 1..=8 {
             let to = Field::new(i, file);
-            if self.insert_or_break_loop(color, from, to, &mut v) == BreakLoop::True {
+            if self.insert_or_break_loop(from, to, piece, &mut v) == BreakLoop::True {
                 break;
             }
         }
         //Downwards
         for i in (1..rank).rev() {
             let to = Field::new(i, file);
-            if self.insert_or_break_loop(color, from, to, &mut v) == BreakLoop::True {
+            if self.insert_or_break_loop(from, to, piece, &mut v) == BreakLoop::True {
                 break;
             }
         }
         //Right
         for j in file + 1..=8 {
             let to = Field::new(rank, j);
-            if self.insert_or_break_loop(color, from, to, &mut v) == BreakLoop::True {
+            if self.insert_or_break_loop(from, to, piece, &mut v) == BreakLoop::True {
                 break;
             }
         }
         //Left
         for j in (1..file).rev() {
             let to = Field::new(rank, j);
-            if self.insert_or_break_loop(color, from, to, &mut v) == BreakLoop::True {
+            if self.insert_or_break_loop(from, to, piece, &mut v) == BreakLoop::True {
                 break;
             }
         }
@@ -1532,11 +1611,12 @@ impl Board {
         let mut v = vec![];
         let mut diff = 1;
         let Field { rank, file } = from;
+        let piece = Piece::bishop(color);
 
         //Up right
         while rank + diff <= 8 && file + diff <= 8 {
             let to = Field::new(rank + diff, file + diff);
-            if self.insert_or_break_loop(color, from, to, &mut v) == BreakLoop::True {
+            if self.insert_or_break_loop(from, to, piece, &mut v) == BreakLoop::True {
                 break;
             }
             diff += 1;
@@ -1546,7 +1626,7 @@ impl Board {
         //Up left
         while rank + diff <= 8 && file - diff >= 1 {
             let to = Field::new(rank + diff, file - diff);
-            if self.insert_or_break_loop(color, from, to, &mut v) == BreakLoop::True {
+            if self.insert_or_break_loop(from, to, piece, &mut v) == BreakLoop::True {
                 break;
             }
             diff += 1;
@@ -1556,7 +1636,7 @@ impl Board {
         //Down right
         while rank - diff >= 1 && file + diff <= 8 {
             let to = Field::new(rank - diff, file + diff);
-            if self.insert_or_break_loop(color, from, to, &mut v) == BreakLoop::True {
+            if self.insert_or_break_loop(from, to, piece, &mut v) == BreakLoop::True {
                 break;
             }
             diff += 1;
@@ -1566,7 +1646,7 @@ impl Board {
         //Down left
         while rank - diff >= 1 && file - diff >= 1 {
             let to = Field::new(rank - diff, file - diff);
-            if self.insert_or_break_loop(color, from, to, &mut v) == BreakLoop::True {
+            if self.insert_or_break_loop(from, to, piece, &mut v) == BreakLoop::True {
                 break;
             }
             diff += 1;
@@ -1587,19 +1667,19 @@ impl Board {
     /// It pushes coordinates into vector v if the color is the opponent's color or if it's empty.
     fn insert_or_break_loop(
         &self,
-        color: PieceColor,
         from: Field,
         to: Field,
+        piece: Piece,
         v: &mut Vec<Move>,
     ) -> BreakLoop {
         let Field { rank, file } = to;
         match self.at(rank, file) {
             Square::Empty => {
-                v.push(Move::new(from, to, MoveType::Default));
+                v.push(Move::new(from, to, piece, MoveType::Default));
             }
             Square::Full(p) => {
-                if p.color == color.opposite() {
-                    v.push(Move::new(from, to, MoveType::Capture));
+                if p.color == piece.color.opposite() {
+                    v.push(Move::new(from, to, piece, MoveType::Capture));
                 }
 
                 return BreakLoop::True;
@@ -1614,28 +1694,23 @@ impl Board {
     ///Given a list of possible target fields, remove those that would land on a piece of
     ///the same color as the moving piece. For the others, create a move of type capture
     /// or default.
-    fn filter_free_or_opponent(
-        &self,
-        from: Field,
-        v: Vec<Field>,
-        opposite: PieceColor,
-    ) -> Vec<Move> {
+    fn filter_free_or_opponent(&self, from: Field, v: Vec<Field>, piece: Piece) -> Vec<Move> {
         let mut default_moves: Vec<Move> = v
             .iter()
             .filter(|to| matches!(self.at(to.rank, to.file), Square::Empty))
-            .map(|&to| Move::new(from, to, MoveType::Default))
+            .map(|&to| Move::new(from, to, piece, MoveType::Default))
             .collect();
 
         let captures: Vec<Move> = v
             .into_iter()
             .filter(|&to| {
                 if let Square::Full(p) = self.at(to.rank, to.file) {
-                    p.color == opposite
+                    p.color == piece.color.opposite()
                 } else {
                     false
                 }
             })
-            .map(|to| Move::new(from, to, MoveType::Capture))
+            .map(|to| Move::new(from, to, piece, MoveType::Capture))
             .collect();
 
         default_moves.extend(captures);
@@ -1694,7 +1769,7 @@ impl Board {
     }
 }
 
-#[derive(Eq, PartialEq, Clone, Copy, Debug)]
+#[derive(Eq, PartialEq, PartialOrd, Clone, Copy, Debug)]
 pub enum PieceKind {
     Pawn,
     Bishop,
@@ -1704,7 +1779,7 @@ pub enum PieceKind {
     King,
 }
 
-#[derive(Eq, PartialEq, Clone, Copy, Debug)]
+#[derive(Eq, PartialEq, Clone, Copy, PartialOrd, Debug)]
 pub struct Piece {
     pub kind: PieceKind,
     pub color: PieceColor,
@@ -1786,22 +1861,22 @@ impl Piece {
 pub struct TranspositionEntry {
     zobrist_key: u64,
     eval: Evaluation,
-    eval_type: EvaluationType,
-    best_move: Option<Move>,
+    //eval_type: EvaluationType,
+    //best_move: Option<Move>,
 }
 
 impl TranspositionEntry {
     pub fn new(
         zobrist_key: u64,
         eval: Evaluation,
-        eval_type: EvaluationType,
-        best_move: Option<Move>,
+        //eval_type: EvaluationType,
+        //best_move: Option<Move>,
     ) -> Self {
         Self {
             zobrist_key,
             eval,
-            eval_type,
-            best_move,
+            //eval_type,
+            // best_move,
         }
     }
 }
@@ -1813,7 +1888,7 @@ pub enum Square {
     Padding,
 }
 
-#[derive(Clone, Copy, PartialEq, Debug)]
+#[derive(Clone, Copy, PartialEq, Debug, Eq)]
 pub enum MoveType {
     Default,
     Capture,
@@ -1899,7 +1974,7 @@ impl ChangedCastlingRights {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialOrd, Debug, PartialEq, Eq)]
 pub enum PieceColor {
     Black,
     White,
@@ -1987,7 +2062,7 @@ mod tests {
         let mut b = BoardState::from_fen("1k6/ppp3Q1/8/8/8/8/6K1/8 w").unwrap();
         let m = b.minimax_standalone(1);
         assert!(m.1 == Evaluation::Mate(PieceColor::White, 1));
-        b.make(m.0.unwrap());
+        b.make(&m.0.unwrap());
         assert!(b.check(PieceColor::Black));
         assert_eq!(b.evaluate(), Evaluation::Mate(PieceColor::White, 0));
     }
@@ -1995,10 +2070,11 @@ mod tests {
     #[test]
     fn mate_in_1_depth_2() {
         let mut b = BoardState::from_fen("1k6/ppp3Q1/8/8/8/8/6K1/8 w").unwrap();
-        let m = b.minimax_standalone(2);
-        println!("got {}, {:#?}", m.0.unwrap(), m.1);
-        assert!(m.1 == Evaluation::Mate(PieceColor::White, 1));
-        b.make(m.0.unwrap());
+        let (m, eval) = b.minimax_standalone(2);
+        let m = m.unwrap();
+        println!("got {}, {:#?}", m, eval);
+        assert!(eval == Evaluation::Mate(PieceColor::White, 1));
+        b.make(&m);
         assert!(b.check(PieceColor::Black));
         assert_eq!(b.evaluate(), Evaluation::Mate(PieceColor::White, 0));
     }
@@ -2008,23 +2084,25 @@ mod tests {
     #[test]
     fn mate_in_1_depth_3() {
         let mut b = BoardState::from_fen("1k6/ppp3Q1/8/8/8/8/6K1/8 w").unwrap();
-        let m = b.minimax_standalone(3);
-        assert!(m.1 == Evaluation::Mate(PieceColor::White, 1));
-        b.make(m.0.unwrap());
+        let (m, eval) = b.minimax_standalone(3);
+        let m = m.unwrap();
+        assert!(eval == Evaluation::Mate(PieceColor::White, 1));
+        b.make(&m);
         assert!(b.check(PieceColor::Black));
         assert_eq!(b.evaluate(), Evaluation::Mate(PieceColor::White, 0));
-        println!("{}", m.0.unwrap());
+        println!("{}", m);
     }
 
     #[test]
     fn mate_in_1_iterative() {
         let mut b = BoardState::from_fen("1k6/ppp3Q1/8/8/8/8/6K1/8 w").unwrap();
-        let m = b.iterative_deepening(500);
-        assert!(m.1 == Evaluation::Mate(PieceColor::White, 1));
-        b.make(m.0.unwrap());
+        let (m, eval) = b.iterative_deepening(500);
+        let m = m.unwrap();
+        assert!(eval == Evaluation::Mate(PieceColor::White, 1));
+        b.make(&m);
         assert!(b.check(PieceColor::Black));
         assert_eq!(b.evaluate(), Evaluation::Mate(PieceColor::White, 0));
-        println!("{}", m.0.unwrap());
+        println!("{}", m);
     }
 
     #[test]

@@ -16,7 +16,7 @@ pub enum Evaluation {
     Mate(PieceColor, u16), //winning color, remaining moves
     Draw,
 }
-
+#[allow(dead_code)]
 pub enum EvaluationType {
     Exact,
     UpperBound,
@@ -383,8 +383,8 @@ pub fn evaluate(state: &mut BoardState) -> Evaluation {
 }
 
 fn no_legal_moves(state: &mut BoardState) -> bool {
-    for m in state.generate_moves() {
-        state.make(m);
+    for m in state.generate_moves(false) {
+        state.make(&m);
         if !state.check(state.turn.opposite()) {
             state.unmake();
             return false;
@@ -394,6 +394,7 @@ fn no_legal_moves(state: &mut BoardState) -> bool {
     true
 }
 
+#[allow(dead_code)]
 ///Return true if current player has no more moves and is in check
 pub fn checkmate(state: &mut BoardState) -> bool {
     no_legal_moves(state) && state.checkmate_given_zero_moves(state.turn.opposite())
