@@ -54,7 +54,8 @@ impl BoardState {
     }
 
     pub fn minimax_standalone(&mut self, depth: u32) -> (Option<Move>, Evaluation) {
-        let (_, receiver) = mpsc::channel();
+        #[allow(unused_variables)]
+        let (sender, receiver) = mpsc::channel();
         self.minimax(
             depth,
             &mut HashMap::<u32, TranspositionEntry>::with_capacity(TRANSPOSITION_TABLE_SIZE),
@@ -85,6 +86,7 @@ impl BoardState {
                         _ => (),
                     }
                     self.make(&m);
+                    // self.draw(true);
                     debug_assert_eq!(self.zobrist.hash, ZobristState::from_board_state(self).hash);
                     if !self.check(self.turn.opposite()) {
                         best_move.get_or_insert(m.clone());
@@ -114,7 +116,7 @@ impl BoardState {
                 }
                 if moves == 0 {
                     if self.checkmate_given_zero_moves(PieceColor::Black) {
-                        println!("CHECKMATE! BLACK WINS!");
+                        eprintln!("CHECKMATE! BLACK WINS!");
                         return (None, Evaluation::Mate(PieceColor::Black, 0));
                     } else {
                         println!("STALEMATE! THE GAME IS A DRAW!");
@@ -139,6 +141,7 @@ impl BoardState {
                         _ => (),
                     }
                     self.make(&m);
+                    //self.draw(true);
                     debug_assert_eq!(self.zobrist.hash, ZobristState::from_board_state(self).hash);
                     if !self.check(self.turn.opposite()) {
                         best_move.get_or_insert(m.clone());
@@ -166,9 +169,10 @@ impl BoardState {
                     }
                     self.unmake();
                 }
+
                 if moves == 0 {
                     if self.checkmate_given_zero_moves(PieceColor::White) {
-                        println!("CHECKMATE! WHITE WINS!");
+                        eprintln!("CHECKMATE! WHITE WINS!");
                         return (None, Evaluation::Mate(PieceColor::White, 0));
                     } else {
                         println!("STALEMATE! THE GAME IS A DRAW!");
@@ -203,7 +207,7 @@ impl BoardState {
                 //White is the maximizing player
                 PieceColor::White => {
                     let mut best_eval = Evaluation::Mate(PieceColor::Black, 0);
-                    for m in self.generate_moves(depth > 3) {
+                    for m in self.generate_moves(true) {
                         match stop_receiver.try_recv() {
                             Err(mpsc::TryRecvError::Disconnected) | Ok(_) => {
                                 return best_eval;
@@ -218,6 +222,7 @@ impl BoardState {
                             return best_eval.increment_if_mate();
                         }
                         self.make(&m);
+                        //self.draw(true);
                         debug_assert_eq!(
                             self.zobrist.hash,
                             ZobristState::from_board_state(self).hash
@@ -246,6 +251,7 @@ impl BoardState {
                         }
                         self.unmake();
                     }
+
                     if (moves == 0 && !self.checkmate_given_zero_moves(PieceColor::Black))
                         || self.taken.len() == 30
                     {
@@ -256,7 +262,7 @@ impl BoardState {
                 //Black is the minimizing player
                 PieceColor::Black => {
                     let mut best_eval = Evaluation::Mate(PieceColor::White, 0);
-                    for m in self.generate_moves(depth > 3) {
+                    for m in self.generate_moves(true) {
                         match stop_receiver.try_recv() {
                             Err(mpsc::TryRecvError::Disconnected) | Ok(_) => {
                                 return best_eval;
@@ -268,6 +274,7 @@ impl BoardState {
                             return best_eval.increment_if_mate();
                         }
                         self.make(&m);
+                        //self.draw(true);
                         debug_assert_eq!(
                             self.zobrist.hash,
                             ZobristState::from_board_state(self).hash
@@ -296,6 +303,7 @@ impl BoardState {
                         }
                         self.unmake();
                     }
+
                     if (moves == 0 && !self.checkmate_given_zero_moves(PieceColor::White))
                         || self.taken.len() == 30
                     {
@@ -1242,6 +1250,7 @@ impl BoardState {
     /// evaluation, we recursively generate all possible captures in the following position.
     ///
     /// Captures may be ignored if it is highly unlikely that they would be beneficial (eg: queen captures pawn).
+    #[allow(unused_variables)]
     fn quiescent_search(
         &mut self,
         alpha: Evaluation,

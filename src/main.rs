@@ -22,7 +22,7 @@ fn main() {
                 count += 1;
                 println!("-- WHITE TO MOVE --");
                 //let m = b.minimax_standalone(6).0;
-                let m = b.iterative_deepening(5000).0;
+                let m = b.iterative_deepening(1000).0;
                 if m.is_none() {
                     return;
                 }
@@ -32,7 +32,7 @@ fn main() {
                 //println!("{:?}", b.hash_history);
                 println!("-- BLACK TO MOVE --");
                 //let m = b.minimax_standalone(6).0;
-                let m = b.iterative_deepening(5000).0;
+                let m = b.iterative_deepening(1000).0;
                 if m.is_none() {
                     return;
                 }
@@ -63,7 +63,7 @@ fn main() {
                             "BLACK IN CHECK (before black's move): {}",
                             b.check(PieceColor::Black).to_string().red()
                         );
-                        let m = b.iterative_deepening(2_000).0;
+                        let m = b.iterative_deepening(2000).0;
                         if m.is_none() {
                             return;
                         }
