@@ -46,6 +46,7 @@ impl BoardState {
         evaluation::evaluate(self)
     }
 
+    ///todo nur captures betrachten
     pub fn threatened(&self, victim_color: PieceColor, field: Field) -> bool {
         //Kinght Moves
 

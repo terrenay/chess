@@ -382,6 +382,76 @@ pub fn evaluate(state: &mut BoardState) -> Evaluation {
     Evaluation::Value((mg_score * mg_phase + eg_score * eg_phase) / 24)
 }
 
+pub fn evaluate_rel(state: &mut BoardState) -> i32 {
+    //If current player has no legal moves (every pseudo-legal move lands him in check)
+    if no_legal_moves(state) {
+        //If the current player is currently in check as well, it's checkmate
+        if state.checkmate_given_zero_moves(state.turn.opposite()) {
+            return -i32::MAX;
+        } else {
+            return 0; //Stalemate
+        }
+    }
+
+    //This will become draw by insufficient material once it's done, for now just consider it a draw if only
+    //the kings remain.
+    if state.taken.len() == 30 {
+        return 0;
+    }
+
+    let board = &state.board;
+    let mut mg_white = 0;
+    let mut mg_black = 0;
+    let mut eg_white = 0;
+    let mut eg_black = 0;
+
+    //Game phase is initially 24. If one player loses his queen, the count is decreased by 4.
+    //If only pawns and kings remain, the count is 0.
+    let mut gamephase = 0;
+
+    for rank in 1..=8 {
+        for file in 1..=8 {
+            if let Square::Full(p) = board.at(rank, file) {
+                let col = file - 1;
+                gamephase += gamephase_value(p.kind);
+                if p.color == PieceColor::White {
+                    //Normal direction
+                    let row = 8 - rank;
+                    mg_white += mg_value(p.kind) + mg_table(p.kind)[row as usize][col as usize];
+                    eg_white += eg_value(p.kind) + eg_table(p.kind)[row as usize][col as usize];
+                } else {
+                    //Flip the tables horizontally for black!
+                    let row = rank - 1;
+                    mg_black += mg_value(p.kind) + mg_table(p.kind)[row as usize][col as usize];
+                    eg_black += eg_value(p.kind) + eg_table(p.kind)[row as usize][col as usize];
+                }
+            }
+        }
+    }
+    // eprintln!("It's {}'s turn", state.turn);
+    // eprintln!("White mg_score: {}", mg_white);
+    // eprintln!("Black mg_score: {}", mg_black);
+
+    let mg_score = if state.turn == PieceColor::White {
+        mg_white - mg_black
+    } else {
+        mg_black - mg_white
+    };
+
+    let eg_score = if state.turn == PieceColor::White {
+        eg_white - eg_black
+    } else {
+        eg_black - eg_white
+    };
+
+    //Now we interpolate between a gamephase value of >=24 (exclusively middle game)
+    //and a gamephase value of 0 (exclusively end game).
+    let mg_phase = cmp::min(gamephase, 24);
+    let eg_phase = 24 - mg_phase;
+
+    (mg_score * mg_phase + eg_score * eg_phase) / 24
+}
+
 fn no_legal_moves(state: &mut BoardState) -> bool {
     for m in state.generate_moves(false) {
         state.make(&m);

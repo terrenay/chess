@@ -8,6 +8,7 @@ mod zobrist;
 fn main() {
     let mut b = BoardState::new();
     b.draw(true);
+    //b.negamax_standalone(3).0;
     let mut count = 0;
     println!("e: egine, h: play");
     let game_mode: String = read!();
@@ -63,12 +64,12 @@ fn main() {
                             "BLACK IN CHECK (before black's move): {}",
                             b.check(PieceColor::Black).to_string().red()
                         );
-                        let m = b.iterative_deepening(2000).0;
-                        if m.is_none() {
+                        let m = b.negamax_standalone(6).0;
+                        if m.is_empty() {
                             return;
                         }
-                        let m = m.unwrap();
-                        b.make(&m);
+                        let m = m.last().unwrap();
+                        b.make(m);
                         b.draw(true);
                     }
                     Err(e) => eprintln!("{}", e.to_string().red()),

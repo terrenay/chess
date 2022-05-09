@@ -9,8 +9,9 @@ use std::{
 };
 
 use crate::{
-    evaluation::Evaluation, zobrist::ZobristState, BoardState, Move, PieceColor,
-    TranspositionEntry, TRANSPOSITION_TABLE_SIZE,
+    evaluation::{checkmate, evaluate, evaluate_rel, Evaluation},
+    zobrist::ZobristState,
+    BoardState, Move, PieceColor, TranspositionEntry, TRANSPOSITION_TABLE_SIZE,
 };
 
 impl BoardState {
@@ -22,6 +23,93 @@ impl BoardState {
             &mut HashMap::<u32, TranspositionEntry>::with_capacity(TRANSPOSITION_TABLE_SIZE),
             &receiver,
         )
+    }
+
+    pub fn negamax_standalone(&mut self, depth: u32) -> (Vec<Move>, i32) {
+        #[allow(unused_variables)]
+        let (sender, receiver) = mpsc::channel();
+        self.negamax(
+            depth,
+            -i32::MAX,
+            i32::MAX,
+            &mut HashMap::<u32, TranspositionEntry>::with_capacity(TRANSPOSITION_TABLE_SIZE),
+            &receiver,
+        )
+    }
+
+    ///todo: falls es bugs gibt, versuch mal den standard move wieder einzufügen (damit er nicht none ist)
+    /// best_eval entspricht einem neuen alpha, wenn man die aktuelle node als root nehmen würde
+    /// Relativ zu self.turn
+    pub fn negamax(
+        &mut self,
+        depth: u32,
+        mut alpha: i32,
+        beta: i32,
+        transposition_table: &mut HashMap<u32, TranspositionEntry>,
+        stop_receiver: &Receiver<bool>,
+    ) -> (Vec<Move>, i32) {
+        // eprintln!("--Start depth {}. a: {}. b: {}--", depth, alpha, beta);
+        if depth == 0 || checkmate(self) || self.threefold_repetition() {
+            // eprintln!("Evaluate");
+            return (vec![], evaluate_rel(self));
+        }
+
+        let mut best_line = vec![];
+        let mut best_eval = -i32::MAX;
+
+        for m in self.generate_moves(true) {
+            match stop_receiver.try_recv() {
+                Err(mpsc::TryRecvError::Disconnected) | Ok(_) => {
+                    return (vec![], best_eval);
+                }
+                _ => (),
+            }
+
+            self.make(&m);
+            debug_assert_eq!(self.zobrist.hash, ZobristState::from_board_state(self).hash);
+
+            if !self.check(self.turn.opposite()) {
+                //self.draw_board(true);
+                let (new_line, new_eval) =
+                    self.negamax(depth - 1, -beta, -alpha, transposition_table, stop_receiver);
+                let new_eval = -new_eval; //negate opponent's evaluation
+
+                if new_eval > best_eval {
+                    // eprintln!("Depth {}, best_eval now {}", depth, new_eval);
+                    best_eval = new_eval;
+                    best_line = new_line;
+                    best_line.push(m);
+                    /*eprintln!("Updated best_line to: ");
+                    for v in best_line.iter() {
+                        eprint!("{} - ", v);
+                    }
+                    eprintln!();*/
+                }
+
+                /*If this move leads to a position with a better value than beta, we can stop.
+                We know that the minimizing opponent has a forced way to reach a position with an evaluation of beta, so if he plays
+                optimally, he will not play anything that would lead to the current position (since it would lead to a worse position
+                for him than what he can already achieve by some different move) */
+
+                /*If this move increases alpha, we store it as our new best move. */
+
+                if new_eval >= beta {
+                    // eprintln!("Move too good, outside beta cutoff");
+                    self.unmake();
+                    break;
+                } else if new_eval > alpha {
+                    // eprintln!("alpha updated");
+                    alpha = new_eval;
+                }
+            }
+            self.unmake();
+        }
+        /*  eprintln!("--End depth {}. Return line: --", depth);
+        for v in best_line.iter() {
+            eprint!("{} - ", v);
+        }*/
+
+        (best_line, best_eval)
     }
 
     ///Assumes root has color state.turn
