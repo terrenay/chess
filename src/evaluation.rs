@@ -453,7 +453,7 @@ pub fn evaluate_rel(state: &mut BoardState) -> i32 {
 }
 
 fn no_legal_moves(state: &mut BoardState) -> bool {
-    for m in state.generate_moves(false) {
+    for m in state.generate_moves(false, false) {
         state.make(&m);
         if !state.check(state.turn.opposite()) {
             state.unmake();

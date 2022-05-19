@@ -1,20 +1,20 @@
 use crate::*;
 
 impl BoardState {
-    pub fn generate_moves(&self, sort: bool) -> Vec<Move> {
-        //Going through all fields, checking whether there is a piece, then calling
-        //pseudo_legal_moves feels quite inefficient...
+    pub fn generate_moves(&self, sort: bool, only_captures: bool) -> Vec<Move> {
+        let mut v: Vec<Move> = if only_captures {
+            vec![]
+        } else {
+            self.castling_moves()
+        };
 
-        //Eventually I want to keep a list of currently alive pieces. Then only go through
-        //those //todo!
-        let mut v: Vec<Move> = self.castling_moves();
         for rank in 1..=8 {
             for file in 1..=8 {
                 if let Square::Full(p) = self.board.at(rank, file) {
                     if p.color == self.turn {
                         v.extend(
                             self.board
-                                .pseudo_legal_moves(Field::new(rank, file))
+                                .pseudo_legal_moves(Field::new(rank, file), only_captures)
                                 .unwrap(),
                         );
                     }
@@ -355,28 +355,38 @@ impl BoardState {
 
 impl Board {
     ///May return NoPieceOnField Error
-    pub fn pseudo_legal_moves(&self, from: Field) -> Result<Vec<Move>, Error> {
+    pub fn pseudo_legal_moves(&self, from: Field, only_captures: bool) -> Result<Vec<Move>, Error> {
         let Field { rank, file } = from;
         match self.at(rank, file) {
             Square::Full(p) => match p.kind {
-                PieceKind::Pawn => Ok(self.pseudo_legal_pawn_moves(p.color, from)),
-                PieceKind::Knight => Ok(self.pseudo_legal_knight_moves(p.color, from)),
-                PieceKind::Bishop => Ok(self.pseudo_legal_bishop_moves(p.color, from)),
-                PieceKind::King => Ok(self.pseudo_legal_king_moves(p.color, from)),
-                PieceKind::Rook => Ok(self.pseudo_legal_rook_moves(p.color, from)),
-                PieceKind::Queen => Ok(self.pseudo_legal_queen_moves(p.color, from)),
+                PieceKind::Pawn => Ok(self.pseudo_legal_pawn_moves(p.color, from, only_captures)),
+                PieceKind::Knight => {
+                    Ok(self.pseudo_legal_knight_moves(p.color, from, only_captures))
+                }
+                PieceKind::Bishop => {
+                    Ok(self.pseudo_legal_bishop_moves(p.color, from, only_captures))
+                }
+                PieceKind::King => Ok(self.pseudo_legal_king_moves(p.color, from, only_captures)),
+                PieceKind::Rook => Ok(self.pseudo_legal_rook_moves(p.color, from, only_captures)),
+                PieceKind::Queen => Ok(self.pseudo_legal_queen_moves(p.color, from, only_captures)),
             },
             _ => Err(Error::NoPieceOnField(Field::new(rank, file))),
         }
     }
 
-    pub fn pseudo_legal_pawn_moves(&self, color: PieceColor, from: Field) -> Vec<Move> {
+    pub fn pseudo_legal_pawn_moves(
+        &self,
+        color: PieceColor,
+        from: Field,
+        only_captures: bool,
+    ) -> Vec<Move> {
         let Field { rank, file } = from;
         let starting_rank;
         let promotion_rank;
         let move_offset;
         let opposite_color = color.opposite();
         let pawn = Piece::pawn(color);
+        let mut moves = vec![];
 
         match color {
             PieceColor::White => {
@@ -391,39 +401,6 @@ impl Board {
             }
         }
 
-        let mut moves = match self.at(rank + move_offset, file) {
-            //If one square in move direction is empty
-            Square::Empty => {
-                let mut standard_moves = vec![];
-
-                standard_moves.push(Move::promotion(
-                    from,
-                    Field::new(rank + move_offset, file),
-                    pawn,
-                    MoveType::Default,
-                    if rank == promotion_rank {
-                        Some(Piece::queen(color))
-                    } else {
-                        None
-                    },
-                ));
-
-                //Can never be a promotion move
-                if rank == starting_rank {
-                    //Double push
-                    if let Square::Empty = self.at(rank + 2 * move_offset, file) {
-                        standard_moves.push(Move::new(
-                            from,
-                            Field::new(rank + 2 * move_offset, file),
-                            pawn,
-                            MoveType::Default,
-                        ));
-                    }
-                }
-                standard_moves
-            }
-            _ => vec![],
-        };
         //Attack to the left
         //Remember this could also be a promotion move.
         match self.at(rank + move_offset, file - 1) {
@@ -460,10 +437,47 @@ impl Board {
             }
             _ => (),
         }
+
+        if only_captures {
+            return moves;
+        }
+
+        if let Square::Empty = self.at(rank + move_offset, file) {
+            moves.push(Move::promotion(
+                from,
+                Field::new(rank + move_offset, file),
+                pawn,
+                MoveType::Default,
+                if rank == promotion_rank {
+                    Some(Piece::queen(color))
+                } else {
+                    None
+                },
+            ));
+
+            //Can never be a promotion move
+            if rank == starting_rank {
+                //Double push
+                if let Square::Empty = self.at(rank + 2 * move_offset, file) {
+                    moves.push(Move::new(
+                        from,
+                        Field::new(rank + 2 * move_offset, file),
+                        pawn,
+                        MoveType::Default,
+                    ));
+                }
+            }
+        };
+
         moves
     }
 
-    pub fn pseudo_legal_knight_moves(&self, color: PieceColor, from: Field) -> Vec<Move> {
+    pub fn pseudo_legal_knight_moves(
+        &self,
+        color: PieceColor,
+        from: Field,
+        only_captures: bool,
+    ) -> Vec<Move> {
         let Field { rank, file } = from;
         let v = vec![
             Field::new(rank + 2, file - 1),
@@ -475,10 +489,15 @@ impl Board {
             Field::new(rank - 1, file - 2),
             Field::new(rank + 1, file - 2),
         ];
-        self.filter_free_or_opponent(from, v, Piece::knight(color))
+        self.filter_free_or_opponent(from, v, Piece::knight(color), only_captures)
     }
 
-    fn pseudo_legal_king_moves(&self, color: PieceColor, from: Field) -> Vec<Move> {
+    fn pseudo_legal_king_moves(
+        &self,
+        color: PieceColor,
+        from: Field,
+        only_captures: bool,
+    ) -> Vec<Move> {
         let Field { rank, file } = from;
         let v = vec![
             Field::new(rank + 1, file - 1),
@@ -490,45 +509,59 @@ impl Board {
             Field::new(rank - 1, file - 1),
             Field::new(rank, file - 1),
         ];
-        self.filter_free_or_opponent(from, v, Piece::king(color))
+        self.filter_free_or_opponent(from, v, Piece::king(color), only_captures)
     }
 
-    pub fn pseudo_legal_rook_moves(&self, color: PieceColor, from: Field) -> Vec<Move> {
+    pub fn pseudo_legal_rook_moves(
+        &self,
+        color: PieceColor,
+        from: Field,
+        only_captures: bool,
+    ) -> Vec<Move> {
         let Field { rank, file } = from;
         let piece = Piece::rook(color);
         //Upwards
         let mut v = vec![];
         for i in rank + 1..=8 {
             let to = Field::new(i, file);
-            if self.insert_or_break_loop(from, to, piece, &mut v) == BreakLoop::True {
+            if self.insert_or_break_loop(from, to, piece, &mut v, only_captures) == BreakLoop::True
+            {
                 break;
             }
         }
         //Downwards
         for i in (1..rank).rev() {
             let to = Field::new(i, file);
-            if self.insert_or_break_loop(from, to, piece, &mut v) == BreakLoop::True {
+            if self.insert_or_break_loop(from, to, piece, &mut v, only_captures) == BreakLoop::True
+            {
                 break;
             }
         }
         //Right
         for j in file + 1..=8 {
             let to = Field::new(rank, j);
-            if self.insert_or_break_loop(from, to, piece, &mut v) == BreakLoop::True {
+            if self.insert_or_break_loop(from, to, piece, &mut v, only_captures) == BreakLoop::True
+            {
                 break;
             }
         }
         //Left
         for j in (1..file).rev() {
             let to = Field::new(rank, j);
-            if self.insert_or_break_loop(from, to, piece, &mut v) == BreakLoop::True {
+            if self.insert_or_break_loop(from, to, piece, &mut v, only_captures) == BreakLoop::True
+            {
                 break;
             }
         }
         v
     }
 
-    pub fn pseudo_legal_bishop_moves(&self, color: PieceColor, from: Field) -> Vec<Move> {
+    pub fn pseudo_legal_bishop_moves(
+        &self,
+        color: PieceColor,
+        from: Field,
+        only_captures: bool,
+    ) -> Vec<Move> {
         let mut v = vec![];
         let mut diff = 1;
         let Field { rank, file } = from;
@@ -537,7 +570,8 @@ impl Board {
         //Up right
         while rank + diff <= 8 && file + diff <= 8 {
             let to = Field::new(rank + diff, file + diff);
-            if self.insert_or_break_loop(from, to, piece, &mut v) == BreakLoop::True {
+            if self.insert_or_break_loop(from, to, piece, &mut v, only_captures) == BreakLoop::True
+            {
                 break;
             }
             diff += 1;
@@ -547,7 +581,8 @@ impl Board {
         //Up left
         while rank + diff <= 8 && file - diff >= 1 {
             let to = Field::new(rank + diff, file - diff);
-            if self.insert_or_break_loop(from, to, piece, &mut v) == BreakLoop::True {
+            if self.insert_or_break_loop(from, to, piece, &mut v, only_captures) == BreakLoop::True
+            {
                 break;
             }
             diff += 1;
@@ -557,7 +592,8 @@ impl Board {
         //Down right
         while rank - diff >= 1 && file + diff <= 8 {
             let to = Field::new(rank - diff, file + diff);
-            if self.insert_or_break_loop(from, to, piece, &mut v) == BreakLoop::True {
+            if self.insert_or_break_loop(from, to, piece, &mut v, only_captures) == BreakLoop::True
+            {
                 break;
             }
             diff += 1;
@@ -567,7 +603,8 @@ impl Board {
         //Down left
         while rank - diff >= 1 && file - diff >= 1 {
             let to = Field::new(rank - diff, file - diff);
-            if self.insert_or_break_loop(from, to, piece, &mut v) == BreakLoop::True {
+            if self.insert_or_break_loop(from, to, piece, &mut v, only_captures) == BreakLoop::True
+            {
                 break;
             }
             diff += 1;
@@ -576,9 +613,14 @@ impl Board {
     }
 
     ///Inefficiency at its peak
-    fn pseudo_legal_queen_moves(&self, color: PieceColor, from: Field) -> Vec<Move> {
-        let mut v = self.pseudo_legal_rook_moves(color, from);
-        v.extend(self.pseudo_legal_bishop_moves(color, from));
+    fn pseudo_legal_queen_moves(
+        &self,
+        color: PieceColor,
+        from: Field,
+        only_captures: bool,
+    ) -> Vec<Move> {
+        let mut v = self.pseudo_legal_rook_moves(color, from, only_captures);
+        v.extend(self.pseudo_legal_bishop_moves(color, from, only_captures));
         v
     }
     ///This function is intended to be used in a loop for a sliding piece which follows that
@@ -586,17 +628,22 @@ impl Board {
     /// This function returns BreakLoop::True if the current square is full or padding.
     /// It returns BreakLoop::False if the square is empty.
     /// It pushes coordinates into vector v if the color is the opponent's color or if it's empty.
+    ///
+    /// If only_captures is true, this will only insert moves that are captures into v.
     fn insert_or_break_loop(
         &self,
         from: Field,
         to: Field,
         piece: Piece,
         v: &mut Vec<Move>,
+        only_captures: bool,
     ) -> BreakLoop {
         let Field { rank, file } = to;
         match self.at(rank, file) {
             Square::Empty => {
-                v.push(Move::new(from, to, piece, MoveType::Default));
+                if !only_captures {
+                    v.push(Move::new(from, to, piece, MoveType::Default));
+                }
             }
             Square::Full(p) => {
                 if p.color == piece.color.opposite() {
@@ -615,15 +662,17 @@ impl Board {
     ///Given a list of possible target fields, remove those that would land on a piece of
     ///the same color as the moving piece. For the others, create a move of type capture
     /// or default.
-    fn filter_free_or_opponent(&self, from: Field, v: Vec<Field>, piece: Piece) -> Vec<Move> {
-        let mut default_moves: Vec<Move> = v
+    ///
+    /// If only_captures is true, this will only return moves that are captures.
+    fn filter_free_or_opponent(
+        &self,
+        from: Field,
+        v: Vec<Field>,
+        piece: Piece,
+        only_captures: bool,
+    ) -> Vec<Move> {
+        let mut captures: Vec<Move> = v
             .iter()
-            .filter(|to| matches!(self.at(to.rank, to.file), Square::Empty))
-            .map(|&to| Move::new(from, to, piece, MoveType::Default))
-            .collect();
-
-        let captures: Vec<Move> = v
-            .into_iter()
             .filter(|&to| {
                 if let Square::Full(p) = self.at(to.rank, to.file) {
                     p.color == piece.color.opposite()
@@ -631,10 +680,20 @@ impl Board {
                     false
                 }
             })
-            .map(|to| Move::new(from, to, piece, MoveType::Capture))
+            .map(|to| Move::new(from, *to, piece, MoveType::Capture))
             .collect();
 
-        default_moves.extend(captures);
-        default_moves
+        if only_captures {
+            return captures;
+        }
+
+        let default_moves: Vec<Move> = v
+            .iter()
+            .filter(|to| matches!(self.at(to.rank, to.file), Square::Empty))
+            .map(|&to| Move::new(from, to, piece, MoveType::Default))
+            .collect();
+
+        captures.extend(default_moves);
+        captures
     }
 }

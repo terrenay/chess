@@ -46,11 +46,13 @@ impl BoardState {
         evaluation::evaluate(self)
     }
 
-    ///todo nur captures betrachten
     pub fn threatened(&self, victim_color: PieceColor, field: Field) -> bool {
         //Kinght Moves
 
-        for m in self.board.pseudo_legal_knight_moves(victim_color, field) {
+        for m in self
+            .board
+            .pseudo_legal_knight_moves(victim_color, field, true)
+        {
             let Field { rank, file } = m.to;
             if let Square::Full(p) = self.board.at(rank, file) {
                 if matches!(p.kind, PieceKind::Knight) {
@@ -61,7 +63,10 @@ impl BoardState {
 
         //Rooks/Queens
 
-        for m in self.board.pseudo_legal_rook_moves(victim_color, field) {
+        for m in self
+            .board
+            .pseudo_legal_rook_moves(victim_color, field, true)
+        {
             let Field { rank, file } = m.to;
             if let Square::Full(p) = self.board.at(rank, file) {
                 if matches!(p.kind, PieceKind::Rook) || matches!(p.kind, PieceKind::Queen) {
@@ -72,7 +77,10 @@ impl BoardState {
 
         //Bishops/Queens
 
-        for m in self.board.pseudo_legal_bishop_moves(victim_color, field) {
+        for m in self
+            .board
+            .pseudo_legal_bishop_moves(victim_color, field, true)
+        {
             let Field { rank, file } = m.to;
             if let Square::Full(p) = self.board.at(rank, file) {
                 if matches!(p.kind, PieceKind::Bishop) || matches!(p.kind, PieceKind::Queen) {
@@ -83,7 +91,10 @@ impl BoardState {
 
         //Pawns
 
-        for m in self.board.pseudo_legal_pawn_moves(victim_color, field) {
+        for m in self
+            .board
+            .pseudo_legal_pawn_moves(victim_color, field, true)
+        {
             let Field { rank, file } = m.to;
             if let Square::Full(p) = self.board.at(rank, file) {
                 if matches!(p.kind, PieceKind::Pawn) {
@@ -282,7 +293,7 @@ impl BoardState {
         }
     }*/
 
-    ///Move piece by string like "e2e4". Checks for pseudo-legality.
+    ///Move piece by string like "e2e4". Checks for legality.
     pub fn move_by_str(&mut self, arg: &str) -> Result<(), Error> {
         println!("\nTry to process input: {}", arg);
 
@@ -319,7 +330,7 @@ impl BoardState {
 
         let mut v = self
             .board
-            .pseudo_legal_moves(from)
+            .pseudo_legal_moves(from, false)
             .unwrap()
             .into_iter()
             .find(|m| m.from == from && m.to == to);
@@ -1125,7 +1136,7 @@ mod tests {
     fn white_pawn_take_left() {
         let b = BoardState::from_fen("rnbqkbnr/pppp1ppp/8/3p4/4P3/8/PPPP1PPP/RNBQKBNR w").unwrap();
         eq_fields(
-            b.board.pseudo_legal_moves(Field::new(4, 5)).unwrap(),
+            b.board.pseudo_legal_moves(Field::new(4, 5), false).unwrap(),
             vec![Field::new(5, 4), Field::new(5, 5)],
         );
     }
@@ -1134,7 +1145,7 @@ mod tests {
     fn white_pawn_not_take_center() {
         let b = BoardState::from_fen("rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w").unwrap();
         eq_fields(
-            b.board.pseudo_legal_moves(Field::new(4, 5)).unwrap(),
+            b.board.pseudo_legal_moves(Field::new(4, 5), false).unwrap(),
             vec![],
         );
     }
@@ -1143,7 +1154,7 @@ mod tests {
     fn white_pawn_take_right() {
         let b = BoardState::from_fen("rnbqkbnr/pppp1ppp/8/5p2/4P3/8/PPPP1PPP/RNBQKBNR w").unwrap();
         eq_fields(
-            b.board.pseudo_legal_moves(Field::new(4, 5)).unwrap(),
+            b.board.pseudo_legal_moves(Field::new(4, 5), false).unwrap(),
             vec![Field::new(5, 6), Field::new(5, 5)],
         );
     }
@@ -1152,7 +1163,7 @@ mod tests {
     fn black_pawn_take_left() {
         let b = BoardState::from_fen("rnbqkbnr/pppp1ppp/8/4p3/3P4/8/PPP1PPPP/RNBQKBNR b").unwrap();
         eq_fields(
-            b.board.pseudo_legal_moves(Field::new(5, 5)).unwrap(),
+            b.board.pseudo_legal_moves(Field::new(5, 5), false).unwrap(),
             vec![Field::new(4, 4), Field::new(4, 5)],
         );
     }
@@ -1161,7 +1172,7 @@ mod tests {
     fn black_pawn_not_take_center() {
         let b = BoardState::from_fen("rnbqkbnr/ppp1pppp/8/3p4/3P4/8/PPP1PPPP/RNBQKBNR b").unwrap();
         eq_fields(
-            b.board.pseudo_legal_moves(Field::new(5, 4)).unwrap(),
+            b.board.pseudo_legal_moves(Field::new(5, 4), false).unwrap(),
             vec![],
         );
     }
@@ -1170,7 +1181,7 @@ mod tests {
     fn black_pawn_take_right() {
         let b = BoardState::from_fen("rnbqkbnr/ppp1pppp/8/3p4/4P3/8/PPPP1PPP/RNBQKBNR b").unwrap();
         eq_fields(
-            b.board.pseudo_legal_moves(Field::new(5, 4)).unwrap(),
+            b.board.pseudo_legal_moves(Field::new(5, 4), false).unwrap(),
             vec![Field::new(4, 4), Field::new(4, 5)],
         );
     }
@@ -1179,7 +1190,7 @@ mod tests {
     fn white_pawn_double_push() {
         let b = BoardState::new();
         eq_fields(
-            b.board.pseudo_legal_moves(Field::new(2, 1)).unwrap(),
+            b.board.pseudo_legal_moves(Field::new(2, 1), false).unwrap(),
             vec![Field::new(3, 1), Field::new(4, 1)],
         );
     }
@@ -1188,7 +1199,7 @@ mod tests {
     fn black_pawn_double_push() {
         let b = BoardState::new();
         eq_fields(
-            b.board.pseudo_legal_moves(Field::new(7, 1)).unwrap(),
+            b.board.pseudo_legal_moves(Field::new(7, 1), false).unwrap(),
             vec![Field::new(6, 1), Field::new(5, 1)],
         );
     }
@@ -1198,7 +1209,7 @@ mod tests {
         let b =
             BoardState::from_fen("rnbqkbnr/1ppppppp/8/8/p7/8/PPPPPPPP/RNBQKBNR w KQkq").unwrap();
         eq_fields(
-            b.board.pseudo_legal_moves(Field::new(2, 1)).unwrap(),
+            b.board.pseudo_legal_moves(Field::new(2, 1), false).unwrap(),
             vec![Field::new(3, 1)],
         );
     }
@@ -1207,7 +1218,7 @@ mod tests {
     fn black_pawn_double_push_blocked() {
         let b = BoardState::from_fen("rnbqkbnr/pppppppp/8/P7/8/8/1PPPPPPP/RNBQKBNR w").unwrap();
         eq_fields(
-            b.board.pseudo_legal_moves(Field::new(7, 1)).unwrap(),
+            b.board.pseudo_legal_moves(Field::new(7, 1), false).unwrap(),
             vec![Field::new(6, 1)],
         );
     }
@@ -1217,7 +1228,7 @@ mod tests {
         let b =
             BoardState::from_fen("rnbqkbnr/pppppppp/8/8/8/4P3/PPPP1PPP/RNBQKBNR w KQkq").unwrap();
         eq_fields(
-            b.board.pseudo_legal_moves(Field::new(2, 4)).unwrap(),
+            b.board.pseudo_legal_moves(Field::new(2, 4), false).unwrap(),
             vec![Field::new(3, 4), Field::new(4, 4)],
         );
     }
@@ -1226,7 +1237,7 @@ mod tests {
     fn white_knight_takes() {
         let b = BoardState::from_fen("rnbqkbnr/pp1ppppp/8/8/8/2p5/PPPPPPPP/RNBQKBNR w").unwrap();
         eq_fields(
-            b.board.pseudo_legal_moves(Field::new(1, 2)).unwrap(),
+            b.board.pseudo_legal_moves(Field::new(1, 2), false).unwrap(),
             vec![Field::new(3, 1), Field::new(3, 3)],
         );
     }
@@ -1235,7 +1246,7 @@ mod tests {
     fn black_knight_corner_blocked() {
         let b = BoardState::from_fen("n7/2p3k1/1p6/8/8/4K3/8/8 w").unwrap();
         eq_fields(
-            b.board.pseudo_legal_moves(Field::new(8, 1)).unwrap(),
+            b.board.pseudo_legal_moves(Field::new(8, 1), false).unwrap(),
             vec![],
         );
     }
@@ -1244,7 +1255,7 @@ mod tests {
     fn black_knight_corner_takes() {
         let b = BoardState::from_fen("n7/2p3k1/1P6/8/8/4K3/8/8 w").unwrap();
         eq_fields(
-            b.board.pseudo_legal_moves(Field::new(8, 1)).unwrap(),
+            b.board.pseudo_legal_moves(Field::new(8, 1), false).unwrap(),
             vec![Field::new(6, 2)],
         );
     }
@@ -1253,7 +1264,7 @@ mod tests {
     fn black_knight_edge_takes() {
         let b = BoardState::from_fen("8/1k3p2/7n/8/6P1/8/2K5/8 w").unwrap();
         eq_fields(
-            b.board.pseudo_legal_moves(Field::new(6, 8)).unwrap(),
+            b.board.pseudo_legal_moves(Field::new(6, 8), false).unwrap(),
             vec![Field::new(8, 7), Field::new(5, 6), Field::new(4, 7)],
         );
     }
@@ -1262,7 +1273,7 @@ mod tests {
     fn black_knight_edge_blocked() {
         let b = BoardState::from_fen("6p1/1k3p2/7n/5p2/6p1/8/1K6/8 w").unwrap();
         eq_fields(
-            b.board.pseudo_legal_moves(Field::new(6, 8)).unwrap(),
+            b.board.pseudo_legal_moves(Field::new(6, 8), false).unwrap(),
             vec![],
         );
     }
@@ -1271,7 +1282,7 @@ mod tests {
     fn white_bishop_attack_partially_blocked() {
         let b = BoardState::from_fen("8/8/8/4R3/1p6/2B4k/8/p6K w").unwrap();
         eq_fields(
-            b.board.pseudo_legal_moves(Field::new(3, 3)).unwrap(),
+            b.board.pseudo_legal_moves(Field::new(3, 3), false).unwrap(),
             vec![
                 Field::new(2, 2),
                 Field::new(4, 4),

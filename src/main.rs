@@ -23,22 +23,22 @@ fn main() {
                 count += 1;
                 println!("-- WHITE TO MOVE --");
                 //let m = b.minimax_standalone(6).0;
-                let m = b.iterative_deepening(1000).0;
-                if m.is_none() {
+                let m = b.iterative_deepening_nega(100).0;
+                if m.is_empty() {
                     return;
                 }
-                let m = m.unwrap();
-                b.make(&m);
+                let m = m.last().unwrap();
+                b.make(m);
                 b.draw(true);
                 //println!("{:?}", b.hash_history);
                 println!("-- BLACK TO MOVE --");
                 //let m = b.minimax_standalone(6).0;
-                let m = b.iterative_deepening(1000).0;
-                if m.is_none() {
+                let m = b.iterative_deepening_nega(50).0;
+                if m.is_empty() {
                     return;
                 }
-                let m = m.unwrap();
-                b.make(&m);
+                let m = m.last().unwrap();
+                b.make(m);
                 b.draw(true);
                 //println!("{:?}", b.hash_history);
             }

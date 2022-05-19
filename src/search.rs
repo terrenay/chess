@@ -49,15 +49,18 @@ impl BoardState {
         stop_receiver: &Receiver<bool>,
     ) -> (Vec<Move>, i32) {
         // eprintln!("--Start depth {}. a: {}. b: {}--", depth, alpha, beta);
-        if depth == 0 || checkmate(self) || self.threefold_repetition() {
+        //todo!("stalemate & genauer überlegen wie ich doppelte checkmate kontrolle vermeiden kann");
+        if checkmate(self) || self.threefold_repetition() {
             // eprintln!("Evaluate");
             return (vec![], evaluate_rel(self));
+        } else if depth == 0 {
+            return self.quiescence_search_rel(10, alpha, beta, transposition_table, stop_receiver);
         }
 
         let mut best_line = vec![];
         let mut best_eval = -i32::MAX;
 
-        for m in self.generate_moves(true) {
+        for m in self.generate_moves(true, false) {
             match stop_receiver.try_recv() {
                 Err(mpsc::TryRecvError::Disconnected) | Ok(_) => {
                     return (vec![], best_eval);
@@ -68,40 +71,47 @@ impl BoardState {
             self.make(&m);
             debug_assert_eq!(self.zobrist.hash, ZobristState::from_board_state(self).hash);
 
-            if !self.check(self.turn.opposite()) {
-                //self.draw_board(true);
-                let (new_line, new_eval) =
-                    self.negamax(depth - 1, -beta, -alpha, transposition_table, stop_receiver);
-                let new_eval = -new_eval; //negate opponent's evaluation
-
-                if new_eval > best_eval {
-                    // eprintln!("Depth {}, best_eval now {}", depth, new_eval);
-                    best_eval = new_eval;
-                    best_line = new_line;
-                    best_line.push(m);
-                    /*eprintln!("Updated best_line to: ");
-                    for v in best_line.iter() {
-                        eprint!("{} - ", v);
-                    }
-                    eprintln!();*/
-                }
-
-                /*If this move leads to a position with a better value than beta, we can stop.
-                We know that the minimizing opponent has a forced way to reach a position with an evaluation of beta, so if he plays
-                optimally, he will not play anything that would lead to the current position (since it would lead to a worse position
-                for him than what he can already achieve by some different move) */
-
-                /*If this move increases alpha, we store it as our new best move. */
-
-                if new_eval >= beta {
-                    // eprintln!("Move too good, outside beta cutoff");
-                    self.unmake();
-                    break;
-                } else if new_eval > alpha {
-                    // eprintln!("alpha updated");
-                    alpha = new_eval;
-                }
+            if self.check(self.turn.opposite()) {
+                self.unmake();
+                continue;
             }
+
+            if best_line.is_empty() {
+                best_line.push(m.clone());
+            }
+            //self.draw_board(true);
+            let (new_line, new_eval) =
+                self.negamax(depth - 1, -beta, -alpha, transposition_table, stop_receiver);
+            let new_eval = -new_eval; //negate opponent's evaluation
+
+            if new_eval > best_eval {
+                // eprintln!("Depth {}, best_eval now {}", depth, new_eval);
+                best_eval = new_eval;
+                best_line = new_line;
+                best_line.push(m);
+                /*eprintln!("Updated best_line to: ");
+                for v in best_line.iter() {
+                    eprint!("{} - ", v);
+                }
+                eprintln!();*/
+            }
+
+            /*If this move leads to a position with a better value than beta, we can stop.
+            We know that the minimizing opponent has a forced way to reach a position with an evaluation of beta, so if he plays
+            optimally, he will not play anything that would lead to the current position (since it would lead to a worse position
+            for him than what he can already achieve by some different move) */
+
+            /*If this move increases alpha, we store it as our new best move. */
+
+            if new_eval >= beta {
+                // eprintln!("Move too good, outside beta cutoff");
+                self.unmake();
+                break;
+            } else if new_eval > alpha {
+                // eprintln!("alpha updated");
+                alpha = new_eval;
+            }
+
             self.unmake();
         }
         /*  eprintln!("--End depth {}. Return line: --", depth);
@@ -110,6 +120,89 @@ impl BoardState {
         }*/
 
         (best_line, best_eval)
+    }
+
+    fn quiescence_search_rel(
+        &mut self,
+        depth: u32,
+        mut alpha: i32,
+        beta: i32,
+        transposition_table: &mut HashMap<u32, TranspositionEntry>,
+        stop_receiver: &Receiver<bool>,
+    ) -> (Vec<Move>, i32) {
+        /*The current evaluation is a lower bound on the final score. This assumes the null move hypothesis, which states
+        that there is always a playable move that increases one's score. Thus, if we don't find a capture that raises alpha,
+        we assume there is some non-capture move that would raise it anyway and return the standing_pat score.*/
+
+        let standing_pat = evaluate_rel(self);
+
+        /*If this position is so good it can't be reached, we don't consider it further. */
+
+        if standing_pat >= beta {
+            return (vec![], beta);
+        }
+
+        /*Still remember the beta cutoff. */
+
+        if depth == 0 || checkmate(self) || self.threefold_repetition() {
+            return (vec![], Ord::min(standing_pat, beta));
+        }
+
+        /*If this position improves alpha. */
+
+        if standing_pat > alpha {
+            alpha = standing_pat;
+        }
+
+        let mut best_line = vec![];
+
+        for m in self.generate_moves(true, true) {
+            match stop_receiver.try_recv() {
+                Err(mpsc::TryRecvError::Disconnected) | Ok(_) => {
+                    return (best_line, alpha);
+                }
+                _ => (),
+            }
+
+            self.make(&m);
+            debug_assert_eq!(self.zobrist.hash, ZobristState::from_board_state(self).hash);
+
+            //If the other side just put itself in check, m was an illegal move.
+
+            if self.check(self.turn.opposite()) {
+                self.unmake();
+                continue;
+            }
+
+            let (new_line, score) = self.quiescence_search_rel(
+                depth - 1,
+                -beta,
+                -alpha,
+                transposition_table,
+                stop_receiver,
+            );
+            let score = -score;
+
+            //If this line quiets down in a position with a score greater than beta, the opponent will not
+            //play a move that would lead to the current position, so we are done.
+
+            if score >= beta {
+                self.unmake();
+                return (new_line, beta);
+            }
+
+            //If this line is an improvement over the previous best line:
+
+            if score > alpha {
+                alpha = score;
+                best_line = new_line;
+                best_line.push(m);
+            }
+
+            self.unmake();
+        }
+
+        (best_line, alpha)
     }
 
     ///Assumes root has color state.turn
@@ -126,7 +219,7 @@ impl BoardState {
         match self.turn {
             PieceColor::White => {
                 let mut best_eval = Evaluation::Mate(PieceColor::Black, 0);
-                for m in self.generate_moves(true) {
+                for m in self.generate_moves(true, false) {
                     //todo: borrow this generated move as much as possible, don't copy it around! It's now on the heap (in a vector), so we can refer to it.
                     match stop_receiver.try_recv() {
                         Err(mpsc::TryRecvError::Disconnected) | Ok(_) => {
@@ -182,7 +275,7 @@ impl BoardState {
             //Black is the minimizing player
             PieceColor::Black => {
                 let mut best_eval = Evaluation::Mate(PieceColor::White, 0);
-                for m in self.generate_moves(true) {
+                for m in self.generate_moves(true, false) {
                     match stop_receiver.try_recv() {
                         Err(mpsc::TryRecvError::Disconnected) | Ok(_) => {
                             return (best_move, best_eval);
@@ -256,7 +349,7 @@ impl BoardState {
                 //White is the maximizing player
                 PieceColor::White => {
                     let mut best_eval = Evaluation::Mate(PieceColor::Black, 0);
-                    for m in self.generate_moves(true) {
+                    for m in self.generate_moves(true, false) {
                         match stop_receiver.try_recv() {
                             Err(mpsc::TryRecvError::Disconnected) | Ok(_) => {
                                 return best_eval;
@@ -311,7 +404,7 @@ impl BoardState {
                 //Black is the minimizing player
                 PieceColor::Black => {
                     let mut best_eval = Evaluation::Mate(PieceColor::White, 0);
-                    for m in self.generate_moves(true) {
+                    for m in self.generate_moves(true, false) {
                         match stop_receiver.try_recv() {
                             Err(mpsc::TryRecvError::Disconnected) | Ok(_) => {
                                 return best_eval;
@@ -403,6 +496,89 @@ impl BoardState {
         };
         //increment_if_mate nur vor returnen aufrufen. Im table ohne dem speichern.
         eval.increment_if_mate()
+    }
+
+    ///Ensures minimax is only called with even depths. Never takes longer than time_limit.
+    /// This function keeps an internal transposition table that is preserved throughout all iterative calls
+    /// from this root position.
+    ///
+    /// Deeper searches order their moves based on results of shallower searches that are stored in the
+    /// transposition table, which enables alpha-beta-pruning to remove a lot more subtrees, thus
+    /// increasing the search speed.
+    pub fn iterative_deepening_nega(&self, time_limit_millis: u64) -> (Vec<Move>, i32) {
+        let mut res = (vec![], 42); //default not used because the loop always runs at least once
+        let mut depth = 1; //Root is frontier node. All children (after all of root's possible moves) are evaluated
+        let max_duration = Duration::from_millis(time_limit_millis);
+        let start = Instant::now();
+
+        /*Transposition Table: Zobrist keys are 64 bits. A table with 2^64 entries is way too big to fit into memory, so
+        we modulo the key with the table size 2^20+7 to get the index. This leads to two types of collisions: Zobrist collisions
+        and index collisions. We avoid index collisions by storing the full 64 bit Zobrist key inside a TranspositionEntry object.
+        We don't have a way of avoiding Zobrist collisions and just hope they happen rarely. */
+
+        /*We want to keep the transposition table between loop iterations, since that is the whole point of using it.
+        However, since the minimax algorithm is run by a different thread, Rust doesn't allow us to simply use the table as if it
+        were running in a single-threaded environment. We don't want to copy the whole table between each iteration, so we use
+        a mutex. */
+
+        /*Problem: One table needs about 60MB. Once the master threads times out, the worker thread is NOT killed but
+        continues running in the background (but its result is finally discarded) - which wastes CPU and RAM.
+        I need to somehow signal to the minimax thread when it is allowed to stop.*/
+
+        let table_lock = Arc::new(Mutex::new(
+            HashMap::<u32, TranspositionEntry>::with_capacity(TRANSPOSITION_TABLE_SIZE),
+        ));
+
+        'outer: loop {
+            let (sender, receiver) = mpsc::channel();
+            let (stop_sender, stop_receiver) = mpsc::channel();
+            let mut board_clone = self.clone();
+            let table_lock_clone = Arc::clone(&table_lock);
+
+            thread::spawn(move || {
+                let mut table = table_lock_clone.lock().unwrap();
+                let worker_res =
+                    board_clone.negamax(depth, -i32::MAX, i32::MAX, &mut table, &stop_receiver);
+                sender.send(worker_res);
+            });
+
+            loop {
+                //|| matches!(res.1, Evaluation::Mate(_, _))
+                if start.elapsed() >= max_duration && depth > 1 {
+                    stop_sender.send(true).unwrap();
+                    break 'outer;
+                }
+
+                if let Ok(worker_res) = receiver.try_recv() {
+                    res = worker_res;
+                    //let table = Arc::clone(&table_lock);
+                    //let table = table.lock().unwrap();
+                    println!("Depth {}: {:#?}.", depth, res.1);
+                    for v in res.0.iter().rev() {
+                        print!("{} ", v);
+                    }
+                    println!();
+                    //todo!("abbrechen wenn mate gefunden");
+                    /*println!(
+                        "After depth {}, transposition table contains {} entries.\n",
+                        depth,
+                        table.len()
+                    );*/
+                    break;
+                }
+            }
+
+            //Only break if we have fully searched at least to a depth of 1.
+            depth += 1;
+        }
+
+        println!(
+            "Searched to a depth of {} plies in {} ms.",
+            depth - 1,
+            start.elapsed().as_millis()
+        );
+
+        res
     }
 
     ///Ensures minimax is only called with even depths. Never takes longer than time_limit.
