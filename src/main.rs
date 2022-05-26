@@ -23,7 +23,7 @@ fn main() {
                 count += 1;
                 println!("-- WHITE TO MOVE --");
                 //let m = b.minimax_standalone(6).0;
-                let m = b.iterative_deepening_nega(100).0;
+                let m = b.iterative_deepening_nega(2000).0;
                 if m.is_empty() {
                     return;
                 }
@@ -33,7 +33,7 @@ fn main() {
                 //println!("{:?}", b.hash_history);
                 println!("-- BLACK TO MOVE --");
                 //let m = b.minimax_standalone(6).0;
-                let m = b.iterative_deepening_nega(50).0;
+                let m = b.iterative_deepening_nega(2000).0;
                 if m.is_empty() {
                     return;
                 }
@@ -47,9 +47,16 @@ fn main() {
             //human
             loop {
                 count += 1;
-                if evaluation::checkmate(&mut b) {
-                    println!("You lost. Checkmate for black.");
-                    return;
+                match evaluation::end_of_game(&mut b, None).0 {
+                    Some(0) => {
+                        println!("Draw");
+                        return;
+                    }
+                    Some(_) => {
+                        println!("You lost. Checkmate for black.");
+                        return;
+                    }
+                    None => (),
                 }
                 println!("-- ENTER NEXT MOVE --");
                 println!(
@@ -64,7 +71,7 @@ fn main() {
                             "BLACK IN CHECK (before black's move): {}",
                             b.check(PieceColor::Black).to_string().red()
                         );
-                        let m = b.negamax_standalone(6).0;
+                        let m = b.iterative_deepening_nega(3000).0;
                         if m.is_empty() {
                             return;
                         }

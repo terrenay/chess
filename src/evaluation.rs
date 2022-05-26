@@ -1,5 +1,4 @@
 //#![warn(clippy::all, clippy::pedantic, clippy::nursery, clippy::cargo)]
-use std::cmp;
 
 use crate::*;
 //All piece tables are from white's perspective.
@@ -7,104 +6,11 @@ use crate::*;
 
 //From: https://www.chessprogramming.org/PeSTO%27s_Evaluation_Function
 
-#[derive(Debug, Clone, Copy)]
-pub enum Evaluation {
-    Value(i32),
-    //u16 is only used in dynamic evaluation to represent the number of moves until a forced checkmate occurs for sure
-    //if the winning player plays perfectly.
-    //In static evaluation, u16 is set to 0 iff the current position is checkmate. Otherwise give a normal value.
-    Mate(PieceColor, u16), //winning color, remaining moves
-    Draw,
-}
 #[allow(dead_code)]
 pub enum EvaluationType {
     Exact,
     UpperBound,
     LowerBound,
-}
-
-impl Evaluation {
-    fn draw_to_0(&self) -> Self {
-        match self {
-            Evaluation::Draw => Self::Value(0),
-            _ => *self,
-        }
-    }
-
-    pub fn increment_if_mate(self) -> Self {
-        match self {
-            Evaluation::Mate(color, rem) => Self::Mate(color, rem + 1),
-            _ => self,
-        }
-    }
-}
-
-//Order: Mate(Black, 0) < Mate(Black, i) < any i32 < 0 = Draw < any i32 < Mate(White, i) < Mate(White, 0)
-//Black minimizes, White maximizes
-
-//Treat i32::MAX as checkmate for white, i32::MIN as checkmate for black, 0 as draw.
-//Todo: Should i32::MIN really be treated as mate for black? Or should that value be impossible?
-impl PartialEq for Evaluation {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Self::Value(self_val), Self::Value(other_val)) => self_val == other_val,
-            (Self::Mate(self_color, self_rem), Self::Mate(other_color, other_rem)) => {
-                self_color == other_color && self_rem == other_rem
-            }
-            (&Self::Value(self_val), &Self::Mate(other_color, other_rem))
-            | (&Self::Mate(other_color, other_rem), &Self::Value(self_val)) => {
-                (self_val == i32::MIN && other_color == PieceColor::Black && other_rem == 0)
-                    || (self_val == i32::MAX && other_color == PieceColor::White && other_rem == 0)
-            }
-            (&Self::Value(self_val), &Self::Draw) | (&Self::Draw, &Self::Value(self_val)) => {
-                self_val == 0
-            }
-            (Self::Mate(_, _), Self::Draw) | (Self::Draw, Self::Mate(_, _)) => false,
-            (Self::Draw, Self::Draw) => true,
-        }
-    }
-}
-
-impl PartialOrd for Evaluation {
-    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
-        use cmp::Ordering::*;
-        use Evaluation::*;
-        use PieceColor::*;
-        //Make sure that we always replace max and min bei mate
-        if let Self::Value(v) = *self {
-            assert_ne!(v, i32::MAX);
-            assert_ne!(v, i32::MIN);
-        }
-        if let Self::Value(v) = *other {
-            assert_ne!(v, i32::MAX);
-            assert_ne!(v, i32::MIN);
-        }
-
-        //Use PartialEq (defined above)
-        if self == other {
-            return Some(Equal);
-        }
-
-        //We don't want to treat a draw different from an evaluation of 0
-        let a = self.draw_to_0();
-        let b = other.draw_to_0();
-
-        match (a, b) {
-            (Mate(Black, 0), _) => Some(Less),
-            (_, Mate(Black, 0)) => Some(Greater),
-            (Mate(Black, i), Mate(Black, j)) => i.partial_cmp(&j),
-            (Mate(Black, _), _) => Some(Less),
-            (_, Mate(Black, _)) => Some(Greater),
-            (Value(left), Value(right)) => left.partial_cmp(&right),
-            (Mate(White, 0), _) => Some(Greater),
-            (_, Mate(White, 0)) => Some(Less),
-            (Mate(White, i), Mate(White, j)) => Some(i.partial_cmp(&j).unwrap().reverse()),
-            (Mate(White, _), _) => Some(Greater),
-            (_, Mate(White, _)) => Some(Less),
-            (Draw, _) => panic!(),
-            (_, Draw) => panic!(),
-        }
-    }
 }
 
 #[rustfmt::skip]
@@ -306,97 +212,13 @@ const fn gamephase_value(kind: PieceKind) -> i32 {
     }
 }
 
-///Positive: White has an advantage
-///
-/// Negative: Black has an advantage
-pub fn evaluate(state: &mut BoardState) -> Evaluation {
-    //If current player has no legal moves (every pseudo-legal move lands him in check)
-    if no_legal_moves(state) {
-        //If the current player is currently in check as well, it's checkmate
-        if state.checkmate_given_zero_moves(state.turn.opposite()) {
-            //If white is checkmated, evaluate to -infty
-            return if state.turn == PieceColor::White {
-                Evaluation::Mate(PieceColor::Black, 0)
-            } else {
-                Evaluation::Mate(PieceColor::White, 0)
-            };
-        } else {
-            return Evaluation::Draw; //No legazl moves but current player not in check -> stalemate
+///If not_end_of_game, it is assumed that this position is neither checkmate nor draw. This will be not verified.
+/// <b> do not call on a position where current player wins checkmate!</b>
+pub fn evaluate_rel(state: &mut BoardState, assume_not_end_of_game: bool) -> i32 {
+    if !assume_not_end_of_game {
+        if let (Some(eval), _) = end_of_game(state, None) {
+            return eval;
         }
-    }
-
-    //This will become draw by insufficient material once it's done, for now just consider it a draw if only
-    //the kings remain.
-    if state.taken.len() == 30 {
-        return Evaluation::Draw;
-    }
-
-    let board = &state.board;
-    let mut mg_white = 0;
-    let mut mg_black = 0;
-    let mut eg_white = 0;
-    let mut eg_black = 0;
-
-    //Game phase is initially 24. If one player loses his queen, the count is decreased by 4.
-    //If only pawns and kings remain, the count is 0.
-    let mut gamephase = 0;
-
-    for rank in 1..=8 {
-        for file in 1..=8 {
-            if let Square::Full(p) = board.at(rank, file) {
-                let col = file - 1;
-                gamephase += gamephase_value(p.kind);
-                if p.color == PieceColor::White {
-                    //Normal direction
-                    let row = 8 - rank;
-                    mg_white += mg_value(p.kind) + mg_table(p.kind)[row as usize][col as usize];
-                    eg_white += eg_value(p.kind) + eg_table(p.kind)[row as usize][col as usize];
-                } else {
-                    //Flip the tables horizontally for black!
-                    let row = rank - 1;
-                    mg_black += mg_value(p.kind) + mg_table(p.kind)[row as usize][col as usize];
-                    eg_black += eg_value(p.kind) + eg_table(p.kind)[row as usize][col as usize];
-                }
-            }
-        }
-    }
-
-    let mg_score = mg_white - mg_black;
-
-    let eg_score = eg_white - eg_black;
-
-    //it can't be white's turn if black is in check (black would have had to remove
-    //the mate threat in the previous turn)
-
-    //Problem: Promotion of several pawns makes the engine think we are in middle game again.
-
-    //If a pawn is promoted very early in the game, or
-    //if one player promotes many pawns, gamephase could theoretically grow
-    //higher than 24, which we want to avoid.
-
-    //Now we interpolate between a gamephase value of >=24 (exclusively middle game)
-    //and a gamephase value of 0 (exclusively end game).
-    let mg_phase = cmp::min(gamephase, 24);
-    let eg_phase = 24 - mg_phase;
-
-    Evaluation::Value((mg_score * mg_phase + eg_score * eg_phase) / 24)
-}
-
-pub fn evaluate_rel(state: &mut BoardState) -> i32 {
-    //If current player has no legal moves (every pseudo-legal move lands him in check)
-    if no_legal_moves(state) {
-        //If the current player is currently in check as well, it's checkmate
-        if state.checkmate_given_zero_moves(state.turn.opposite()) {
-            return -i32::MAX;
-        } else {
-            return 0; //Stalemate
-        }
-    }
-
-    //This will become draw by insufficient material once it's done, for now just consider it a draw if only
-    //the kings remain.
-    if state.taken.len() == 30 {
-        return 0;
     }
 
     let board = &state.board;
@@ -446,14 +268,113 @@ pub fn evaluate_rel(state: &mut BoardState) -> i32 {
 
     //Now we interpolate between a gamephase value of >=24 (exclusively middle game)
     //and a gamephase value of 0 (exclusively end game).
-    let mg_phase = cmp::min(gamephase, 24);
+    let mg_phase = Ord::min(gamephase, 24);
     let eg_phase = 24 - mg_phase;
 
     (mg_score * mg_phase + eg_score * eg_phase) / 24
 }
 
+///If legal_moves is Some(ms), then legal_moves have already been computed (as in negamax).
+/// If they have not been precomputed, generates and returns them
+pub fn checkmate(
+    state: &mut BoardState,
+    legal_moves: Option<Vec<Move>>,
+) -> (Option<i32>, Option<Vec<Move>>) {
+    match legal_moves {
+        Some(legal_moves) => {
+            if state.check(state.turn) && legal_moves.is_empty() {
+                (Some(-i32::MAX), Some(legal_moves))
+            } else {
+                (None, Some(legal_moves))
+            }
+        }
+        None => {
+            /*Important in quiescence: We want to avoid generating all moves, so we first make sure we are even in check. */
+            if !state.check(state.turn) {
+                return (None, None);
+            }
+
+            let legal_moves = state.generate_legal_moves(true, false);
+
+            if legal_moves.is_empty() {
+                (Some(-i32::MAX), Some(legal_moves))
+            } else {
+                (None, Some(legal_moves))
+            }
+        }
+    }
+}
+
+/*negamax precomputes legal_moves and passes Some(lm) into this function, which returns (_,None).
+quiescence DOESNT precompute legal moves, instead passes None. Only if the position is check, this function
+computes all legal moves and returns (_,Some(lm)), which quiescence then filters for captures. */
+
+///If legal_moves are precomputed, pass them in. Otherwise, pass in None and this function computes them only if necessary
+/// (that is, if check() returns true), in which case it will return them.
+pub fn end_of_game(
+    state: &mut BoardState,
+    legal_moves: Option<Vec<Move>>,
+) -> (Option<i32>, Option<Vec<Move>>) {
+    let (mate_eval, legal_moves) = checkmate(state, legal_moves);
+
+    if mate_eval.is_some() {
+        return (mate_eval, legal_moves);
+    }
+
+    draw(state, legal_moves, true)
+}
+
+///This function checks for the following conditions:
+/// <ul>
+/// <li>Stalemate</li>
+/// <li>Threefold Repetition</li>
+/// <li>Insufficient material (only kings)</li>
+/// </ul>
+/// <b>If given_not_checkmate, this assumes the current position is not a checkmate situation.</b>
+fn draw(
+    state: &mut BoardState,
+    legal_moves: Option<Vec<Move>>,
+    assume_not_checkmate: bool,
+) -> (Option<i32>, Option<Vec<Move>>) {
+    //If only kings remain, it doesn't matter how many legal moves there are, it's always a draw.
+    if state.taken.len() == 30 {
+        return (Some(0), legal_moves);
+    }
+
+    if state.threefold_repetition() {
+        return (Some(0), legal_moves);
+    }
+
+    //If there are 0 legal moves and we know we are not in a checkmate situation, it must be stalemate.
+    //Avoid recomputing whether the position is checkmate if we already know it.
+
+    if let Some(legal_moves) = legal_moves {
+        if legal_moves.is_empty() {
+            if assume_not_checkmate {
+                return (Some(0), Some(legal_moves));
+            } else {
+                unimplemented!()
+            }
+        }
+        return (None, Some(legal_moves));
+    } else if no_legal_moves(state) {
+        if assume_not_checkmate {
+            return (Some(0), None);
+        } else {
+            unimplemented!()
+        }
+    } else {
+        return (None, legal_moves);
+    }
+}
+
+///pseudolegal moves müssten auch lazily generiert werden, damit das sinn ergibt!
+///
+/// Lächerlich ineffizient, macht alles kaputt!
+/// todo: bauern, knight etc der reihe nach, und jedes mal dazwischen maken und schauen ob es legal ist. sofort abbrechen beim
+/// ersten legalen.
 fn no_legal_moves(state: &mut BoardState) -> bool {
-    for m in state.generate_moves(false, false) {
+    for m in state.generate_pseudo_legal_moves(false, false) {
         state.make(&m);
         if !state.check(state.turn.opposite()) {
             state.unmake();
@@ -462,10 +383,4 @@ fn no_legal_moves(state: &mut BoardState) -> bool {
         state.unmake();
     }
     true
-}
-
-#[allow(dead_code)]
-///Return true if current player has no more moves and is in check
-pub fn checkmate(state: &mut BoardState) -> bool {
-    no_legal_moves(state) && state.checkmate_given_zero_moves(state.turn.opposite())
 }

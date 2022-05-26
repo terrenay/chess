@@ -39,13 +39,6 @@ impl BoardState {
         (self.zobrist.hash % TRANSPOSITION_TABLE_SIZE as u64) as u32
     }
 
-    ///Static evaluation
-    ///
-    /// Positive: White's advantage
-    pub fn evaluate(&mut self) -> Evaluation {
-        evaluation::evaluate(self)
-    }
-
     pub fn threatened(&self, victim_color: PieceColor, field: Field) -> bool {
         //Kinght Moves
 
@@ -853,7 +846,7 @@ impl Piece {
 ///None means no move has been stored, it does not imply checkmate!
 pub struct TranspositionEntry {
     zobrist_key: u64,
-    eval: Evaluation,
+    eval: i32,
     //eval_type: EvaluationType,
     //best_move: Option<Move>,
 }
@@ -861,7 +854,7 @@ pub struct TranspositionEntry {
 impl TranspositionEntry {
     pub fn new(
         zobrist_key: u64,
-        eval: Evaluation,
+        eval: i32,
         //eval_type: EvaluationType,
         //best_move: Option<Move>,
     ) -> Self {
@@ -1002,7 +995,7 @@ pub enum Error {
     #[error("cannot parse symbol")]
     Parse,
 }
-
+/*
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1402,3 +1395,4 @@ mod tests {
         assert_eq!(fields, v2);
     }
 }
+*/
