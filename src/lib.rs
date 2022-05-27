@@ -45,7 +45,7 @@ impl BoardState {
 
         for m in self
             .board
-            .pseudo_legal_knight_moves(victim_color, field, false)
+            .pseudo_legal_knight_moves(victim_color, field, true)
         {
             let Field { rank, file } = m.to;
             if let Square::Full(p) = self.board.at(rank, file) {
@@ -59,7 +59,7 @@ impl BoardState {
 
         for m in self
             .board
-            .pseudo_legal_rook_moves(victim_color, field, false)
+            .pseudo_legal_rook_moves(victim_color, field, true)
         {
             let Field { rank, file } = m.to;
             if let Square::Full(p) = self.board.at(rank, file) {
@@ -73,7 +73,7 @@ impl BoardState {
 
         for m in self
             .board
-            .pseudo_legal_bishop_moves(victim_color, field, false)
+            .pseudo_legal_bishop_moves(victim_color, field, true)
         {
             let Field { rank, file } = m.to;
             if let Square::Full(p) = self.board.at(rank, file) {
@@ -87,7 +87,7 @@ impl BoardState {
 
         for m in self
             .board
-            .pseudo_legal_pawn_moves(victim_color, field, false)
+            .pseudo_legal_pawn_moves(victim_color, field, true)
         {
             let Field { rank, file } = m.to;
             if let Square::Full(p) = self.board.at(rank, file) {
