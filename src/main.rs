@@ -1,4 +1,6 @@
 #![allow(unused)]
+use std::thread::sleep;
+
 use chess::*;
 use colored::Colorize;
 use text_io::read;
@@ -23,6 +25,7 @@ fn main() {
                 count += 1;
                 println!("-- WHITE TO MOVE --");
                 //let m = b.minimax_standalone(6).0;
+                // let m = b.negamax_standalone(1).0;
                 let m = b.iterative_deepening_nega(2000).0;
                 if m.is_empty() {
                     return;
@@ -33,6 +36,7 @@ fn main() {
                 //println!("{:?}", b.hash_history);
                 println!("-- BLACK TO MOVE --");
                 //let m = b.minimax_standalone(6).0;
+                // let m = b.negamax_standalone(1).0;
                 let m = b.iterative_deepening_nega(2000).0;
                 if m.is_empty() {
                     return;

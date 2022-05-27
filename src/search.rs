@@ -38,23 +38,28 @@ impl BoardState {
         stop_receiver: &Receiver<bool>,
     ) -> (Vec<Move>, i32) {
         // eprintln!("--Start depth {}. a: {}. b: {}--", depth, alpha, beta);
-        //todo!("stalemate & genauer überlegen wie ich doppelte checkmate kontrolle vermeiden kann");
-
-        //todo wenn diese position draw by insufficient material ist, wird dies nicht als unentschieden gewertet.
 
         let legal_moves = self.generate_legal_moves(true, false);
 
         let (end_of_game_eval, legal_moves) = end_of_game(self, Some(legal_moves));
 
-        if end_of_game_eval.is_some() {
-            return (vec![], end_of_game_eval.unwrap());
+        if let Some(v) = end_of_game_eval {
+            return (vec![], v);
         } else if depth == 0 {
-            return self.quiescence_search_rel(10, alpha, beta, transposition_table, stop_receiver);
+            return self.quiescence_search_rel(
+                10,
+                alpha,
+                beta,
+                legal_moves,
+                transposition_table,
+                stop_receiver,
+            );
         }
 
         let mut best_line = vec![];
         let mut best_eval = -i32::MAX;
         let legal_moves = legal_moves.unwrap();
+        assert!(!legal_moves.is_empty());
 
         for m in legal_moves {
             match stop_receiver.try_recv() {
@@ -127,6 +132,7 @@ impl BoardState {
         depth: u32,
         mut alpha: i32,
         beta: i32,
+        legal_moves_from_negamax: Option<Vec<Move>>,
         transposition_table: &mut HashMap<u32, TranspositionEntry>,
         stop_receiver: &Receiver<bool>,
     ) -> (Vec<Move>, i32) {
@@ -140,10 +146,22 @@ impl BoardState {
         that there is always a playable move that increases one's score. Thus, if we don't find a capture that raises alpha,
         we assume there is some non-capture move that would raise it anyway and return the standing_pat score.*/
 
-        let (end_of_game_eval, legal_moves) = end_of_game(self, None);
+        /*Small optimization: When quiescence is first called from negamax, it has already determined that the current position
+        is not end of game (otherwise, it would terminate instead of calling quiescence). In addition, it has already
+        generated all legal moves for the current position. This saves us from generating them again.
+        Therefore, if and only if this function is called from negamax, legal_moves is Some.*/
 
-        if let Some(v) = end_of_game_eval {
-            return (vec![], v);
+        let legal_moves;
+
+        match legal_moves_from_negamax {
+            Some(m) => legal_moves = Some(m),
+            None => {
+                let (end_of_game_eval, m) = end_of_game(self, None);
+                legal_moves = m;
+                if let Some(v) = end_of_game_eval {
+                    return (vec![], v);
+                }
+            }
         }
 
         /*Since we know the position is not checkmate or draw, we don't compute that again in the static evaluation. */
@@ -195,6 +213,7 @@ impl BoardState {
                 depth - 1,
                 -beta,
                 -alpha,
+                None,
                 transposition_table,
                 stop_receiver,
             );
@@ -294,6 +313,11 @@ impl BoardState {
 
             //Only break if we have fully searched at least to a depth of 1.
             depth += 1;
+
+            if res.1 == i32::MAX || res.1 == -i32::MAX {
+                eprintln!("Stop deepening because forced mate has been found");
+                break;
+            }
         }
 
         println!(

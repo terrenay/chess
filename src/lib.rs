@@ -14,6 +14,7 @@ use zobrist::*;
 const STARTING_POSITION: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq";
 //const STARTING_POSITION: &str = "rnbqkbnr/1p2pppp/p2p4/2p5/4P3/2N2N2/PPPP1PPP/R1BQKB1R w KQkq"; //Sicilian after opening
 //const STARTING_POSITION: &str = "rn1qk2r/p1ppbppp/bp2pn2/8/2PP4/1P3NP1/P2BPP1P/RN1QKB1R w KQkq"; //Queens indian
+//const STARTING_POSITION: &str = "1k6/ppp3Q1/8/8/8/8/6K1/8 w"; //Checkmate in 1
 
 const TRANSPOSITION_TABLE_SIZE: usize = 1_048_583;
 
@@ -44,7 +45,7 @@ impl BoardState {
 
         for m in self
             .board
-            .pseudo_legal_knight_moves(victim_color, field, true)
+            .pseudo_legal_knight_moves(victim_color, field, false)
         {
             let Field { rank, file } = m.to;
             if let Square::Full(p) = self.board.at(rank, file) {
@@ -58,7 +59,7 @@ impl BoardState {
 
         for m in self
             .board
-            .pseudo_legal_rook_moves(victim_color, field, true)
+            .pseudo_legal_rook_moves(victim_color, field, false)
         {
             let Field { rank, file } = m.to;
             if let Square::Full(p) = self.board.at(rank, file) {
@@ -72,7 +73,7 @@ impl BoardState {
 
         for m in self
             .board
-            .pseudo_legal_bishop_moves(victim_color, field, true)
+            .pseudo_legal_bishop_moves(victim_color, field, false)
         {
             let Field { rank, file } = m.to;
             if let Square::Full(p) = self.board.at(rank, file) {
@@ -86,7 +87,7 @@ impl BoardState {
 
         for m in self
             .board
-            .pseudo_legal_pawn_moves(victim_color, field, true)
+            .pseudo_legal_pawn_moves(victim_color, field, false)
         {
             let Field { rank, file } = m.to;
             if let Square::Full(p) = self.board.at(rank, file) {
@@ -995,7 +996,7 @@ pub enum Error {
     #[error("cannot parse symbol")]
     Parse,
 }
-/*
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1035,34 +1036,30 @@ mod tests {
         let b = BoardState::from_fen("3r4/2k3Q1/p5R1/8/8/p3B3/4n1K1/8 b").unwrap();
         assert!(b.check(PieceColor::Black));
     }
-
+    /*
     #[test]
     fn back_rank_mate() {
         let mut b = BoardState::from_fen("1k4Q1/ppp5/8/8/8/8/6K1/8 b").unwrap();
         assert!(b.check(PieceColor::Black));
-        assert_eq!(b.evaluate(), Evaluation::Mate(PieceColor::White, 0));
-    }
+        assert_eq!(evaluate_rel(&mut b, false), -i32::MAX);
+    }*/
 
     #[test]
     fn mate_in_1_depth_1() {
         let mut b = BoardState::from_fen("1k6/ppp3Q1/8/8/8/8/6K1/8 w").unwrap();
-        let m = b.minimax_standalone(1);
-        assert!(m.1 == Evaluation::Mate(PieceColor::White, 1));
-        b.make(&m.0.unwrap());
+        let (m, _) = b.negamax_standalone(1);
+        b.make(m.first().unwrap());
         assert!(b.check(PieceColor::Black));
-        assert_eq!(b.evaluate(), Evaluation::Mate(PieceColor::White, 0));
+        assert_eq!(evaluate_rel(&mut b, false), -i32::MAX);
     }
 
     #[test]
     fn mate_in_1_depth_2() {
         let mut b = BoardState::from_fen("1k6/ppp3Q1/8/8/8/8/6K1/8 w").unwrap();
-        let (m, eval) = b.minimax_standalone(2);
-        let m = m.unwrap();
-        println!("got {}, {:#?}", m, eval);
-        assert!(eval == Evaluation::Mate(PieceColor::White, 1));
-        b.make(&m);
+        let (m, eval) = b.negamax_standalone(2);
+        b.make(m.first().unwrap());
         assert!(b.check(PieceColor::Black));
-        assert_eq!(b.evaluate(), Evaluation::Mate(PieceColor::White, 0));
+        assert_eq!(evaluate_rel(&mut b, false), -i32::MAX);
     }
 
     //Achtung falls verhalten sich ändert mit hashtable, weil hier castling rights in der start-
@@ -1070,39 +1067,31 @@ mod tests {
     #[test]
     fn mate_in_1_depth_3() {
         let mut b = BoardState::from_fen("1k6/ppp3Q1/8/8/8/8/6K1/8 w").unwrap();
-        let (m, eval) = b.minimax_standalone(3);
-        let m = m.unwrap();
-        assert!(eval == Evaluation::Mate(PieceColor::White, 1));
-        b.make(&m);
+        let (m, eval) = b.negamax_standalone(3);
+        b.make(m.first().unwrap());
         assert!(b.check(PieceColor::Black));
-        assert_eq!(b.evaluate(), Evaluation::Mate(PieceColor::White, 0));
-        println!("{}", m);
+        assert_eq!(evaluate_rel(&mut b, false), -i32::MAX);
     }
 
     #[test]
     fn mate_in_1_iterative() {
         let mut b = BoardState::from_fen("1k6/ppp3Q1/8/8/8/8/6K1/8 w").unwrap();
-        let (m, eval) = b.iterative_deepening(500);
-        let m = m.unwrap();
-        assert!(eval == Evaluation::Mate(PieceColor::White, 1));
-        b.make(&m);
+        let (m, eval) = b.iterative_deepening_nega(300);
+        b.make(m.first().unwrap());
         assert!(b.check(PieceColor::Black));
-        assert_eq!(b.evaluate(), Evaluation::Mate(PieceColor::White, 0));
-        println!("{}", m);
+        assert_eq!(evaluate_rel(&mut b, false), -i32::MAX);
     }
 
     #[test]
     fn mate_in_3_endgame() {
         let mut b = BoardState::from_fen("7R/2N1P3/8/8/8/8/k6K/8 w").unwrap();
-        let m = b.minimax_standalone(5);
-        assert_eq!(m.0.unwrap().to, Field::new(8, 2));
-    }
-
-    #[test]
-    fn mate_in_3_with_rem_count() {
-        let mut b = BoardState::from_fen("8/p1p2pp1/4k3/8/P1n2PPp/3K3P/3p4/1r6 b").unwrap();
-        let m = b.minimax_standalone(5);
-        assert_eq!(m.1, Evaluation::Mate(PieceColor::Black, 5));
+        let m = b.negamax_standalone(5);
+        todo!();
+        for m in m.0.iter() {
+            eprint!("{} ", m);
+        }
+        eprintln!("{}", m.0.first().unwrap());
+        assert_eq!(m.0.first().unwrap().to, Field::new(8, 2));
     }
 
     /*#[test]
@@ -1395,4 +1384,3 @@ mod tests {
         assert_eq!(fields, v2);
     }
 }
-*/

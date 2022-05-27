@@ -5,14 +5,14 @@ impl BoardState {
     pub fn generate_legal_moves(&mut self, sort: bool, only_captures: bool) -> Vec<Move> {
         let pseudo_legal_moves = self.generate_pseudo_legal_moves(sort, only_captures);
         let mut legal_moves = Vec::with_capacity(pseudo_legal_moves.len());
-        for m in pseudo_legal_moves.iter() {
-            self.make(m);
+        for m in pseudo_legal_moves.into_iter() {
+            self.make(&m);
             if !self.check(self.turn.opposite()) {
                 legal_moves.push(m);
             }
             self.unmake();
         }
-        pseudo_legal_moves
+        legal_moves
     }
 
     pub fn generate_pseudo_legal_moves(&self, sort: bool, only_captures: bool) -> Vec<Move> {

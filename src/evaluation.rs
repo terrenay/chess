@@ -280,25 +280,35 @@ pub fn checkmate(
     state: &mut BoardState,
     legal_moves: Option<Vec<Move>>,
 ) -> (Option<i32>, Option<Vec<Move>>) {
+    // eprintln!("start checkmate");
     match legal_moves {
         Some(legal_moves) => {
+            // eprintln!("legal moves given");
             if state.check(state.turn) && legal_moves.is_empty() {
+                // eprintln!("mate");
                 (Some(-i32::MAX), Some(legal_moves))
             } else {
+                // eprintln!("not mate, moves: {}", legal_moves.first().unwrap());
                 (None, Some(legal_moves))
             }
         }
         None => {
+            // eprintln!("legal moves NOT given");
             /*Important in quiescence: We want to avoid generating all moves, so we first make sure we are even in check. */
             if !state.check(state.turn) {
+                // eprintln!("not check");
                 return (None, None);
             }
+
+            // eprintln!("check, generating all legal moves...");
 
             let legal_moves = state.generate_legal_moves(true, false);
 
             if legal_moves.is_empty() {
+                // eprintln!("mate");
                 (Some(-i32::MAX), Some(legal_moves))
             } else {
+                // eprintln!("not mate, moves: {}", legal_moves.first().unwrap());
                 (None, Some(legal_moves))
             }
         }
@@ -315,9 +325,12 @@ pub fn end_of_game(
     state: &mut BoardState,
     legal_moves: Option<Vec<Move>>,
 ) -> (Option<i32>, Option<Vec<Move>>) {
+    // state.draw_board(true);
+    // eprintln!("start end_of_game in position above");
     let (mate_eval, legal_moves) = checkmate(state, legal_moves);
 
     if mate_eval.is_some() {
+        // eprintln!("end end_of_game (checkmate)");
         return (mate_eval, legal_moves);
     }
 
@@ -337,6 +350,7 @@ fn draw(
     assume_not_checkmate: bool,
 ) -> (Option<i32>, Option<Vec<Move>>) {
     //If only kings remain, it doesn't matter how many legal moves there are, it's always a draw.
+    // eprintln!("start draw");
     if state.taken.len() == 30 {
         return (Some(0), legal_moves);
     }
@@ -349,22 +363,27 @@ fn draw(
     //Avoid recomputing whether the position is checkmate if we already know it.
 
     if let Some(legal_moves) = legal_moves {
+        // eprintln!("legal moves given");
         if legal_moves.is_empty() {
             if assume_not_checkmate {
+                // eprintln!("stalemate");
                 return (Some(0), Some(legal_moves));
             } else {
                 unimplemented!()
             }
         }
-        return (None, Some(legal_moves));
+        // eprintln!("not stalemate");
+        (None, Some(legal_moves))
     } else if no_legal_moves(state) {
+        // eprintln!("legal moves NOT given but lazily computed and no move found");
         if assume_not_checkmate {
-            return (Some(0), None);
+            (Some(0), None)
         } else {
             unimplemented!()
         }
     } else {
-        return (None, legal_moves);
+        // eprintln!("legal moves NOT given but lazily computed and found a move");
+        (None, None)
     }
 }
 
