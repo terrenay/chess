@@ -24,9 +24,8 @@ fn main() {
                 }
                 count += 1;
                 println!("-- WHITE TO MOVE --");
-                //let m = b.minimax_standalone(6).0;
-                // let m = b.negamax_standalone(1).0;
-                let m = b.iterative_deepening_nega(2000).0;
+                // let m = b.negamax_standalone(6).0;
+                let m = b.iterative_deepening_nega(2000, None).0;
                 if m.is_empty() {
                     return;
                 }
@@ -36,8 +35,8 @@ fn main() {
                 //println!("{:?}", b.hash_history);
                 println!("-- BLACK TO MOVE --");
                 //let m = b.minimax_standalone(6).0;
-                // let m = b.negamax_standalone(1).0;
-                let m = b.iterative_deepening_nega(2000).0;
+                // let m = b.negamax_standalone(6).0;
+                let m = b.iterative_deepening_nega(2000, None).0;
                 if m.is_empty() {
                     return;
                 }
@@ -48,43 +47,95 @@ fn main() {
             }
         }
         "h" => {
+            println!("Play as black (b) or white (w)?");
+            let player_color: String = read!();
             //human
-            loop {
-                count += 1;
-                match evaluation::end_of_game(&mut b, None).0 {
-                    Some(0) => {
-                        println!("Draw");
-                        return;
-                    }
-                    Some(_) => {
-                        println!("You lost. Checkmate for black.");
-                        return;
-                    }
-                    None => (),
-                }
-                println!("-- ENTER NEXT MOVE --");
-                println!(
-                    "WHITE CURRENTLY IN CHECK: {}",
-                    b.check(PieceColor::White).to_string().red()
-                );
-                let input: String = read!();
-                match b.move_by_str(input.as_str()) {
-                    Ok(()) => {
-                        println!("Please let me think :)");
-                        println!(
-                            "BLACK IN CHECK (before black's move): {}",
-                            b.check(PieceColor::Black).to_string().red()
-                        );
-                        let m = b.iterative_deepening_nega(3000).0;
-                        if m.is_empty() {
+            match player_color.as_str() {
+                "w" => loop {
+                    count += 1;
+                    match evaluation::end_of_game(&mut b, None).0 {
+                        Some(0) => {
+                            println!("Draw");
                             return;
                         }
-                        let m = m.last().unwrap();
-                        b.make(m);
-                        b.draw(true);
+                        Some(_) => {
+                            println!("You lost. Checkmate for black.");
+                            return;
+                        }
+                        None => (),
                     }
-                    Err(e) => eprintln!("{}", e.to_string().red()),
+                    println!("-- ENTER NEXT MOVE --");
+                    println!(
+                        "WHITE CURRENTLY IN CHECK: {}",
+                        b.check(PieceColor::White).to_string().red()
+                    );
+                    let input: String = read!();
+                    match b.move_by_str(input.as_str()) {
+                        Ok(()) => {
+                            println!("Please let me think :)");
+                            println!(
+                                "BLACK IN CHECK (before black's move): {}",
+                                b.check(PieceColor::Black).to_string().red()
+                            );
+                            let m = b.iterative_deepening_nega(2000, None).0;
+                            if m.is_empty() {
+                                return;
+                            }
+                            let m = m.last().unwrap();
+                            b.make(m);
+                            b.draw(true);
+                        }
+                        Err(e) => eprintln!("{}", e.to_string().red()),
+                    }
+                },
+                "b" => {
+                    println!("Please let me think :)");
+                    let m = b.iterative_deepening_nega(2000, None).0;
+                    if m.is_empty() {
+                        return;
+                    }
+                    let m = m.last().unwrap();
+                    b.make(m);
+                    b.draw(true);
+                    loop {
+                        count += 1;
+                        match evaluation::end_of_game(&mut b, None).0 {
+                            Some(0) => {
+                                println!("Draw");
+                                return;
+                            }
+                            Some(_) => {
+                                println!("You lost. Checkmate for black.");
+                                return;
+                            }
+                            None => (),
+                        }
+                        println!("-- ENTER NEXT MOVE --");
+                        println!(
+                            "WHITE CURRENTLY IN CHECK: {}",
+                            b.check(PieceColor::White).to_string().red()
+                        );
+                        let input: String = read!();
+                        match b.move_by_str(input.as_str()) {
+                            Ok(()) => {
+                                println!("Please let me think :)");
+                                println!(
+                                    "BLACK IN CHECK (before black's move): {}",
+                                    b.check(PieceColor::Black).to_string().red()
+                                );
+                                let m = b.iterative_deepening_nega(2000, None).0;
+                                if m.is_empty() {
+                                    return;
+                                }
+                                let m = m.last().unwrap();
+                                b.make(m);
+                                b.draw(true);
+                            }
+                            Err(e) => eprintln!("{}", e.to_string().red()),
+                        }
+                    }
                 }
+                _ => (),
             }
         }
         _ => (),

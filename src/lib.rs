@@ -7,14 +7,23 @@ mod zobrist;
 use std::fmt::{self, Display};
 
 use colored::Colorize;
-use evaluation::*;
 use ndarray::prelude::*;
 use zobrist::*;
 
+//Default starting position
 const STARTING_POSITION: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq";
-//const STARTING_POSITION: &str = "rnbqkbnr/1p2pppp/p2p4/2p5/4P3/2N2N2/PPPP1PPP/R1BQKB1R w KQkq"; //Sicilian after opening
-//const STARTING_POSITION: &str = "rn1qk2r/p1ppbppp/bp2pn2/8/2PP4/1P3NP1/P2BPP1P/RN1QKB1R w KQkq"; //Queens indian
-//const STARTING_POSITION: &str = "1k6/ppp3Q1/8/8/8/8/6K1/8 w"; //Checkmate in 1
+
+//Sicilian after opening
+//const STARTING_POSITION: &str = "rnbqkbnr/1p2pppp/p2p4/2p5/4P3/2N2N2/PPPP1PPP/R1BQKB1R w KQkq";
+
+//Queens indian
+//const STARTING_POSITION: &str = "rn1qk2r/p1ppbppp/bp2pn2/8/2PP4/1P3NP1/P2BPP1P/RN1QKB1R w KQkq";
+
+//Checkmate in 1
+//const STARTING_POSITION: &str = "1k6/ppp3Q1/8/8/8/8/6K1/8 w";
+
+//Mate in 3
+// const STARTING_POSITION: &str = "7R/2N1P3/8/8/8/8/k6K/8 w";
 
 const TRANSPOSITION_TABLE_SIZE: usize = 1_048_583;
 
@@ -1047,7 +1056,7 @@ mod tests {
     #[test]
     fn mate_in_1_depth_1() {
         let mut b = BoardState::from_fen("1k6/ppp3Q1/8/8/8/8/6K1/8 w").unwrap();
-        let (m, _) = b.negamax_standalone(1);
+        let (m, _) = b.iterative_deepening_nega(300, None);
         b.make(m.first().unwrap());
         assert!(b.check(PieceColor::Black));
         assert_eq!(evaluate_rel(&mut b, false), -i32::MAX);
@@ -1056,7 +1065,7 @@ mod tests {
     #[test]
     fn mate_in_1_depth_2() {
         let mut b = BoardState::from_fen("1k6/ppp3Q1/8/8/8/8/6K1/8 w").unwrap();
-        let (m, eval) = b.negamax_standalone(2);
+        let (m, _) = b.iterative_deepening_nega(300, Some(2));
         b.make(m.first().unwrap());
         assert!(b.check(PieceColor::Black));
         assert_eq!(evaluate_rel(&mut b, false), -i32::MAX);
@@ -1067,7 +1076,7 @@ mod tests {
     #[test]
     fn mate_in_1_depth_3() {
         let mut b = BoardState::from_fen("1k6/ppp3Q1/8/8/8/8/6K1/8 w").unwrap();
-        let (m, eval) = b.negamax_standalone(3);
+        let (m, _) = b.iterative_deepening_nega(300, Some(3));
         b.make(m.first().unwrap());
         assert!(b.check(PieceColor::Black));
         assert_eq!(evaluate_rel(&mut b, false), -i32::MAX);
@@ -1076,7 +1085,7 @@ mod tests {
     #[test]
     fn mate_in_1_iterative() {
         let mut b = BoardState::from_fen("1k6/ppp3Q1/8/8/8/8/6K1/8 w").unwrap();
-        let (m, eval) = b.iterative_deepening_nega(300);
+        let (m, _) = b.iterative_deepening_nega(300, None);
         b.make(m.first().unwrap());
         assert!(b.check(PieceColor::Black));
         assert_eq!(evaluate_rel(&mut b, false), -i32::MAX);
@@ -1084,13 +1093,11 @@ mod tests {
 
     #[test]
     fn mate_in_3_endgame() {
-        let mut b = BoardState::from_fen("7R/2N1P3/8/8/8/8/k6K/8 w").unwrap();
-        let m = b.negamax_standalone(5);
-        todo!();
+        let b = BoardState::from_fen("7R/2N1P3/8/8/8/8/k6K/8 w").unwrap();
+        let m = b.iterative_deepening_nega(500, Some(5));
         for m in m.0.iter() {
             eprint!("{} ", m);
         }
-        eprintln!("{}", m.0.first().unwrap());
         assert_eq!(m.0.first().unwrap().to, Field::new(8, 2));
     }
 

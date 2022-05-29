@@ -9,24 +9,12 @@ use std::{
 };
 
 use crate::{
-    evaluation::{checkmate, end_of_game, evaluate_rel},
+    evaluation::{end_of_game, evaluate_rel},
     zobrist::ZobristState,
-    BoardState, Move, MoveType, PieceColor, TranspositionEntry, TRANSPOSITION_TABLE_SIZE,
+    BoardState, Move, MoveType, TranspositionEntry, TRANSPOSITION_TABLE_SIZE,
 };
 
 impl BoardState {
-    pub fn negamax_standalone(&mut self, depth: u32) -> (Vec<Move>, i32) {
-        #[allow(unused_variables)]
-        let (sender, receiver) = mpsc::channel();
-        self.negamax(
-            depth,
-            -i32::MAX,
-            i32::MAX,
-            &mut HashMap::<u32, TranspositionEntry>::with_capacity(TRANSPOSITION_TABLE_SIZE),
-            &receiver,
-        )
-    }
-
     /// best_eval entspricht einem neuen alpha, wenn man die aktuelle node als root nehmen würde
     /// Relativ zu self.turn
     pub fn negamax(
@@ -248,7 +236,12 @@ impl BoardState {
     /// Deeper searches order their moves based on results of shallower searches that are stored in the
     /// transposition table, which enables alpha-beta-pruning to remove a lot more subtrees, thus
     /// increasing the search speed.
-    pub fn iterative_deepening_nega(&self, time_limit_millis: u64) -> (Vec<Move>, i32) {
+    pub fn iterative_deepening_nega(
+        &self,
+        time_limit_millis: u64,
+        min_depth: Option<u32>,
+    ) -> (Vec<Move>, i32) {
+        //todo!("mit option eine minimum depth angeben und als standalone benutzen");
         let mut res = (vec![], 42); //default not used because the loop always runs at least once
         let mut depth = 1; //Root is frontier node. All children (after all of root's possible moves) are evaluated
         let max_duration = Duration::from_millis(time_limit_millis);
@@ -280,14 +273,14 @@ impl BoardState {
 
             thread::spawn(move || {
                 let mut table = table_lock_clone.lock().unwrap();
-                let worker_res =
+                let mut worker_res =
                     board_clone.negamax(depth, -i32::MAX, i32::MAX, &mut table, &stop_receiver);
+                worker_res.0.reverse();
                 sender.send(worker_res);
             });
 
             loop {
-                //|| matches!(res.1, Evaluation::Mate(_, _))
-                if start.elapsed() >= max_duration && depth > 1 {
+                if start.elapsed() >= max_duration && depth > min_depth.or(Some(1)).unwrap() {
                     stop_sender.send(true).unwrap();
                     break 'outer;
                 }
@@ -297,7 +290,7 @@ impl BoardState {
                     //let table = Arc::clone(&table_lock);
                     //let table = table.lock().unwrap();
                     println!("Depth {}: {:#?}.", depth, res.1);
-                    for v in res.0.iter().rev() {
+                    for v in res.0.iter() {
                         print!("{} ", v);
                     }
                     println!();
