@@ -6,8 +6,8 @@ use crate::*;
 
 //From: https://www.chessprogramming.org/PeSTO%27s_Evaluation_Function
 
-#[allow(dead_code)]
-pub enum EvaluationType {
+#[derive(PartialEq, Eq, Debug)]
+pub enum EvaluationFlag {
     Exact,
     UpperBound,
     LowerBound,

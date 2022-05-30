@@ -4,9 +4,13 @@ mod movegen;
 mod search;
 mod zobrist;
 
-use std::fmt::{self, Display};
+use std::{
+    collections::HashMap,
+    fmt::{self, Display},
+};
 
 use colored::Colorize;
+use evaluation::EvaluationFlag;
 use ndarray::prelude::*;
 use zobrist::*;
 
@@ -45,8 +49,32 @@ impl BoardState {
     }
 
     ///Get index to transposition table, depending on TRANSPOSITION_TABLE_SIZE
+    ///
+    /// Zobrist keys are 64 bits. But to index the hashmap we use a smaller subset of this and accept hash collisions.
+    /// We must confirm that the 64 bit zobrist keys match before using any value stored in the hashmap.
     fn transposition_table_index(&self) -> u32 {
         (self.zobrist.hash % TRANSPOSITION_TABLE_SIZE as u64) as u32
+    }
+
+    fn get_transposition_entry<'a>(
+        &self,
+        transposition_table: &'a HashMap<u32, TranspositionEntry>,
+    ) -> Option<&'a TranspositionEntry> {
+        if let Some(entry) = transposition_table.get(&self.transposition_table_index()) {
+            if entry.zobrist_key == self.zobrist.hash {
+                return Some(entry);
+            }
+        }
+        None
+    }
+
+    ///Scheme: Always replace
+    fn update_transposition_table(
+        &self,
+        transposition_table: &mut HashMap<u32, TranspositionEntry>,
+        entry: TranspositionEntry,
+    ) {
+        transposition_table.insert(self.transposition_table_index(), entry);
     }
 
     pub fn threatened(&self, victim_color: PieceColor, field: Field) -> bool {
@@ -853,26 +881,31 @@ impl Piece {
     }
 }
 
-///None means no move has been stored, it does not imply checkmate!
+///None means no move has been stored
+///
+/// positive eval <=> white advantage
 pub struct TranspositionEntry {
     zobrist_key: u64,
+    depth: u32,
     eval: i32,
-    //eval_type: EvaluationType,
-    //best_move: Option<Move>,
+    flag: EvaluationFlag,
+    best_move: Option<Move>,
 }
 
 impl TranspositionEntry {
     pub fn new(
         zobrist_key: u64,
+        depth: u32,
         eval: i32,
-        //eval_type: EvaluationType,
-        //best_move: Option<Move>,
+        flag: EvaluationFlag,
+        best_move: Option<Move>,
     ) -> Self {
         Self {
             zobrist_key,
+            depth,
             eval,
-            //eval_type,
-            // best_move,
+            flag,
+            best_move,
         }
     }
 }
@@ -1008,6 +1041,8 @@ pub enum Error {
 
 #[cfg(test)]
 mod tests {
+    use crate::evaluation::evaluate_rel;
+
     use super::*;
 
     #[test]

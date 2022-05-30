@@ -29,7 +29,7 @@ fn main() {
                 if m.is_empty() {
                     return;
                 }
-                let m = m.last().unwrap();
+                let m = m.first().unwrap();
                 b.make(m);
                 b.draw(true);
                 //println!("{:?}", b.hash_history);
@@ -40,7 +40,7 @@ fn main() {
                 if m.is_empty() {
                     return;
                 }
-                let m = m.last().unwrap();
+                let m = m.first().unwrap();
                 b.make(m);
                 b.draw(true);
                 //println!("{:?}", b.hash_history);
@@ -81,7 +81,7 @@ fn main() {
                             if m.is_empty() {
                                 return;
                             }
-                            let m = m.last().unwrap();
+                            let m = m.first().unwrap();
                             b.make(m);
                             b.draw(true);
                         }
@@ -94,7 +94,7 @@ fn main() {
                     if m.is_empty() {
                         return;
                     }
-                    let m = m.last().unwrap();
+                    let m = m.first().unwrap();
                     b.make(m);
                     b.draw(true);
                     loop {
@@ -127,7 +127,7 @@ fn main() {
                                 if m.is_empty() {
                                     return;
                                 }
-                                let m = m.last().unwrap();
+                                let m = m.first().unwrap();
                                 b.make(m);
                                 b.draw(true);
                             }

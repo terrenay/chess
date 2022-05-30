@@ -9,9 +9,9 @@ use std::{
 };
 
 use crate::{
-    evaluation::{end_of_game, evaluate_rel},
+    evaluation::{end_of_game, evaluate_rel, EvaluationFlag},
     zobrist::ZobristState,
-    BoardState, Move, MoveType, TranspositionEntry, TRANSPOSITION_TABLE_SIZE,
+    BoardState, Move, MoveType, PieceColor, TranspositionEntry, TRANSPOSITION_TABLE_SIZE,
 };
 
 impl BoardState {
@@ -27,6 +27,26 @@ impl BoardState {
     ) -> (Vec<Move>, i32) {
         // eprintln!("--Start depth {}. a: {}. b: {}--", depth, alpha, beta);
 
+        /*Accessing the transposition table */
+
+        if let Some(entry) = self.get_transposition_entry(transposition_table) {
+            if entry.depth >= depth {
+                if entry.flag == EvaluationFlag::Exact {
+                    let rel_eval = if self.turn == PieceColor::White {
+                        entry.eval
+                    } else {
+                        -entry.eval
+                    };
+                    if entry.best_move.is_some() {
+                        // eprintln!("From tt");
+                        return (vec![entry.best_move.clone().unwrap()], rel_eval);
+                    } else {
+                        // eprintln!("in tt but no move");
+                    }
+                }
+            }
+        }
+
         let legal_moves = self.generate_legal_moves(true, false);
 
         let (end_of_game_eval, legal_moves) = end_of_game(self, Some(legal_moves));
@@ -34,7 +54,7 @@ impl BoardState {
         if let Some(v) = end_of_game_eval {
             return (vec![], v);
         } else if depth == 0 {
-            return self.quiescence_search_rel(
+            let res = self.quiescence_search_rel(
                 10,
                 alpha,
                 beta,
@@ -42,12 +62,31 @@ impl BoardState {
                 transposition_table,
                 stop_receiver,
             );
+
+            let flag = if res.1 <= alpha {
+                EvaluationFlag::LowerBound
+            } else if res.1 >= beta {
+                EvaluationFlag::UpperBound
+            } else {
+                EvaluationFlag::Exact
+            };
+
+            let best_move = if res.0.is_empty() {
+                None
+            } else {
+                assert_eq!(flag, EvaluationFlag::Exact);
+                Some(res.0.first().unwrap().clone())
+            };
+
+            let entry = TranspositionEntry::new(self.zobrist.hash, 0, res.1, flag, best_move);
+            self.update_transposition_table(transposition_table, entry);
+            return res;
         }
 
         let mut best_line = vec![];
         let mut best_eval = -i32::MAX;
         let legal_moves = legal_moves.unwrap();
-        assert!(!legal_moves.is_empty());
+        debug_assert!(!legal_moves.is_empty());
 
         for m in legal_moves {
             match stop_receiver.try_recv() {
@@ -115,6 +154,8 @@ impl BoardState {
     /// evaluation, we recursively generate all possible captures in the following position.
     ///
     /// Captures may be ignored if it is highly unlikely that they would be beneficial (eg: queen captures pawn).
+    ///
+    /// Returns at least alpha and at most beta (both inclusive)
     fn quiescence_search_rel(
         &mut self,
         depth: u32,
