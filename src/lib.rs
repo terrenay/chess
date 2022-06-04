@@ -29,6 +29,9 @@ const STARTING_POSITION: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w K
 //Mate in 3
 //const STARTING_POSITION: &str = "7R/2N1P3/8/8/8/8/k6K/8 w";
 
+//21 ply search should give king to b1. Test transposition table
+//const STARTING_POSITION: &str = "8/k7/3p4/p2P1p2/P2P1P2/8/8/K7 w";
+
 const TRANSPOSITION_TABLE_SIZE: usize = 1_048_583;
 
 #[derive(Clone)]
@@ -71,6 +74,19 @@ impl BoardState {
 
     ///This only returns Some if entry.key == self.zobrist.hash
     pub fn get_transposition_entry<'a>(
+        &self,
+        transposition_table: &'a HashMap<u32, TranspositionEntry>,
+    ) -> Option<&'a TranspositionEntry> {
+        if let Some(entry) = transposition_table.get(&self.transposition_table_index()) {
+            if entry.zobrist_key == self.zobrist.hash {
+                return Some(entry);
+            }
+        }
+        None
+    }
+
+    #[deprecated]
+    fn tt_table_test_get_transposition_entry<'a>(
         &self,
         transposition_table: &'a HashMap<u32, TranspositionEntry>,
     ) -> Option<&'a TranspositionEntry> {
@@ -635,7 +651,13 @@ impl BoardState {
             if ply % 2 == 0 {
                 print!("{}. ", ply / 2);
             }
-            print!("{} ", m);
+            if m.move_type == MoveType::CastleKingside {
+                print!("O-O ");
+            } else if m.move_type == MoveType::CastleQueenside {
+                print!("O-O-O ");
+            } else {
+                print!("{} ", m);
+            }
             ply += 1;
         }
     }
@@ -954,7 +976,7 @@ impl Piece {
 ///None means no move has been stored
 ///
 /// positive eval <=> white advantage
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TranspositionEntry {
     zobrist_key: u64,
     depth: u32,

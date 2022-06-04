@@ -73,7 +73,7 @@ impl BoardState {
             let rel_eval = self.relative_eval(entry.eval);
             if rel_eval >= beta {
                 // eprintln!("tt better than beta->return");
-                return rel_eval;
+                return beta;
             }
             // eprintln!("tt worse than beta.");
         }
@@ -91,13 +91,13 @@ impl BoardState {
             let rel_eval = self.relative_eval(entry.eval);
             if rel_eval <= alpha {
                 // eprintln!("tt worse than alpha->return");
-                return rel_eval;
+                /*bug fixed: Hier muss ich jetzt alpha returnen, sonst verbessert sich die aussage nicht. */
+                return alpha;
             }
             // eprintln!("tt better than alpha");
         }
 
         if depth == 0 {
-            //den ganzen teil hier in quiescence reinnehmen! mit legal=issome
             debug_assert!(legal_moves.is_some());
             return self.quiescence_search_rel(
                 10,
@@ -233,7 +233,7 @@ impl BoardState {
                 if let Some(v) = end_of_game_eval {
                     // eprintln!("quiescence says EOG");
                     if v > beta {
-                        eprintln!("return outside alpha beta");
+                        // eprintln!("return outside alpha beta");
                     }
                     self.quiescence_update_table(horizon_node, v, None, transposition_table);
                     return v;
@@ -361,14 +361,14 @@ impl BoardState {
     /// increasing the search speed.
     pub fn iterative_deepening_nega(
         &self,
-        time_limit_millis: u64,
+        time_limit_millis: Option<u64>,
         min_depth: Option<u32>,
     ) -> (i32, Option<Move>) {
         //todo!("mit option eine minimum depth angeben und als standalone benutzen");
         let mut eval = 42; //default not used because the loop always runs at least once
         let mut best_move = None;
         let mut depth = 1; //Root is frontier node. All children (after all of root's possible moves) are evaluated
-        let max_duration = Duration::from_millis(time_limit_millis);
+        let max_duration = time_limit_millis.map(Duration::from_millis);
         let start = Instant::now();
 
         /*Transposition Table: Zobrist keys are 64 bits. A table with 2^64 entries is way too big to fit into memory, so
@@ -434,7 +434,9 @@ impl BoardState {
             });
 
             loop {
-                if start.elapsed() >= max_duration && depth > min_depth.or(Some(1)).unwrap() {
+                if start.elapsed() >= max_duration.or(Some(Duration::ZERO)).unwrap()
+                    && depth > min_depth.or(Some(1)).unwrap()
+                {
                     //Tell the worker thread to stop
                     stop_sender.send(true).unwrap();
                     //Wait for it to really stop
@@ -445,8 +447,11 @@ impl BoardState {
                 if let Ok((worker_eval, worker_best_move)) = receiver.try_recv() {
                     eval = worker_eval;
                     best_move = worker_best_move;
-                    //let table = Arc::clone(&table_lock);
-                    //let table = table.lock().unwrap();
+                    /*For debugging: */
+                    let table_lock = Arc::clone(&table_lock);
+                    let table = table_lock.lock().unwrap();
+                    let mut board_clone = self.clone();
+
                     if best_move.is_some() {
                         println!(
                             "Depth {}: {:#?}. Best move: {}",
@@ -457,13 +462,20 @@ impl BoardState {
                     } else {
                         println!("Depth {}: {:#?}. Best move: None", depth, eval);
                     }
+
+                    let mut entry = board_clone.get_transposition_entry(&table).cloned();
+                    while entry.is_some() {
+                        let m = entry.unwrap().best_move;
+                        if m.is_some() {
+                            print!("{} ", m.as_ref().unwrap());
+                            board_clone.make(&m.unwrap());
+                            entry = board_clone.get_transposition_entry(&table).cloned();
+                        } else {
+                            break;
+                        }
+                    }
                     println!();
-                    //todo!("abbrechen wenn mate gefunden");
-                    /*println!(
-                        "After depth {}, transposition table contains {} entries.\n",
-                        depth,
-                        table.len()
-                    );*/
+
                     break;
                 }
             }

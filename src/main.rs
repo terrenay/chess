@@ -25,7 +25,7 @@ fn main() {
                 count += 1;
                 println!("-- WHITE TO MOVE --");
                 // let m = b.negamax_standalone(6).0;
-                let m = b.iterative_deepening_nega(1000, None).1;
+                let m = b.iterative_deepening_nega(None, Some(4)).1;
                 if m.is_none() {
                     b.print_all_moves();
                     return;
@@ -37,7 +37,7 @@ fn main() {
                 println!("-- BLACK TO MOVE --");
                 //let m = b.minimax_standalone(6).0;
                 // let m = b.negamax_standalone(6).0;
-                let m = b.iterative_deepening_nega(100, None).1;
+                let m = b.iterative_deepening_nega(None, Some(4)).1;
                 if m.is_none() {
                     b.print_all_moves();
                     return;
@@ -83,7 +83,7 @@ fn main() {
                                     "BLACK IN CHECK (before black's move): {}",
                                     b.check(PieceColor::Black).to_string().red()
                                 );
-                                let m = b.iterative_deepening_nega(2000, None).1;
+                                let m = b.iterative_deepening_nega(Some(2000), None).1;
                                 if m.is_none() {
                                     b.print_all_moves();
                                     return;
@@ -98,7 +98,7 @@ fn main() {
                 }
                 "b" => {
                     println!("Please let me think :)");
-                    let m = b.iterative_deepening_nega(2000, None).1;
+                    let m = b.iterative_deepening_nega(Some(2000), None).1;
                     if m.is_none() {
                         b.print_all_moves();
                         return;
@@ -134,7 +134,7 @@ fn main() {
                                     "BLACK IN CHECK (before black's move): {}",
                                     b.check(PieceColor::Black).to_string().red()
                                 );
-                                let m = b.iterative_deepening_nega(2000, None).1;
+                                let m = b.iterative_deepening_nega(Some(2000), None).1;
                                 if m.is_none() {
                                     b.print_all_moves();
                                     return;

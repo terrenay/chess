@@ -1,0 +1,29 @@
+Position: 8/k7/3p4/p2P1p2/P2P1P2/8/8/K7 w
+Depth fixed 2
+Search with TT (with ==) should give exactly the same game as a search without TT
+
+1. Ka1b2 Ka7b6 2. Kb2c3 Kb6c7 3. Kc3c4 Kc7d7 4. Kc4b5 Kd7e7 5. Kb5c6 Ke7f6 6. Kc6d6 Kf6g6 7. Kd6e6 Kg6g7 
+8. Ke6f5 Kg7f7 9. d5d6 Kf7e8 10. d4d5 Ke8d7 11. Kf5e5 Kd7d8 12. Ke5e6 Kd8c8 13. d6d7 Kc8d8 14. f4f5 Kd8c7 
+15. f5f6 Kc7d8 16. f6f7 Kd8c7 17. f7f8 Kc7b7 18. d7d8 Kb7a6 19. d5d6 Ka6b7 20. d6d7 Kb7a6 21. Ke6f6 Ka6b7 
+22. Qf8d6 Kb7a7 23. Qd6b6
+
+Passed
+-------------------------------------
+Default Position
+Depth fixed 2
+Search with TT (with ==) should give exactly the same game as a search without TT (use tt_table_test_get_entry)
+in iterative_deepening
+
+1. Ng1f3 Ng8f6 2. d2d4 d7d5 3. Nb1c3 Nb8c6 4. Bc1e3 Bc8e6 5. Nf3g5 Be6f5 6. Ra1c1 e7e5 7. Ng5f3 Bf8d6 
+8. d4e5 Bd6e5 9. Nf3e5 Nc6e5 10. Be3d4 Qd8e7 11. f2f4 Ne5d7 12. Bd4f6 Nd7f6 13. Nc3d5 Qe7d6 14. Nd5f6 Qd6f6 
+15. c2c3 Ra8d8 16. Qd1a4 Bf5d7 17. Qa4d4 Qf6h4 18. g2g3 Qh4g4 19. Qd4e5 Bd7e6 20. Qe5c7 Be6d5 21. Qc7e5 Ke8f8 
+22. Rc1d1 f7f6 23. Qe5e3 Kf8f7 24. h2h3 Qg4g6 25. Rh1g1 Qg6c2 26. Qe3a7 Qc2b2 27. Qa7a5 Qb2a2 28. Qa5a2 Bd5a2 
+29. Bf1g2 Rd8d1 30. Ke1d1 Rh8d8 31. Kd1c2 Ba2c4 32. Bg2b7 Bc4e2 33. Bb7e4 h7h5 34. f4f5 Be2c4 35. Rg1c1 Bc4d5 
+36. Kc2d3 Kf7e7 37. Kd3d4 Bd5c6 38. Kd4e3 Bc6d5 39. Rc1d1 Bd5c4 40. Rd1d8 Ke7d8 41. Be4f3 Bc4f7 42. g3g4 h5h4 
+43. Bf3e4 Kd8e7 44. Ke3d4 Ke7d6 45. c3c4 g7g5 46. c4c5 Kd6e7 47. c5c6 Ke7d6 48. Be4f3 Bf7e8 49. c6c7 Be8d7 
+50. c7c8 Bd7c8 51. Bf3d5 Bc8d7 52. Kd4e4 Kd6c5 53. Bd5b7 Bd7c6 54. Bb7c6 Kc5c6 55. Ke4d4 Kc6d6 56. Kd4e4 Kd6c5 
+57. Ke4e3 Kc5d5 58. Ke3d3 Kd5e5 59. Kd3e3 Ke5d5 60. Ke3d3 Kd5e5 61. Kd3e3 Ke5d6 62. Ke3d4 Kd6e7 63. Kd4d5 Ke7d7 
+64. Kd5c5 Kd7e7 65. Kc5c6 Ke7f7 66. Kc6d7 Kf7g7 67. Kd7e7 Kg7h6 68. Ke7f6 Kh6h7 69. Kf6g5 Kh7g7 70. Kg5h4 Kg7f6 
+71. Kh4g3 Kf6e5 72. Kg3f3 Ke5f6 73. Kf3e4 Kf6g5 74. Ke4e5 Kg5h4 75. f5f6 Kh4h3 76. Ke5f4 Kh3g2 77. f6f7 Kg2f2 
+78. f7f8 Kf2g2 79. Qf8e7 Kg2f2 80. g4g5 Kf2g2 81. g5g6 Kg2f2 82. g6g7 Kf2g2 83. g7g8 Kg2f2 84. Qg8g5 Kf2f1 85. 
+Kf4e3 Kf1e1 86. Qg5g1
