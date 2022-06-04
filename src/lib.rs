@@ -27,7 +27,7 @@ const STARTING_POSITION: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w K
 //const STARTING_POSITION: &str = "1k6/ppp3Q1/8/8/8/8/6K1/8 w";
 
 //Mate in 3
-// const STARTING_POSITION: &str = "7R/2N1P3/8/8/8/8/k6K/8 w";
+//const STARTING_POSITION: &str = "7R/2N1P3/8/8/8/8/k6K/8 w";
 
 const TRANSPOSITION_TABLE_SIZE: usize = 1_048_583;
 
@@ -48,15 +48,29 @@ impl BoardState {
         Self::from_fen(STARTING_POSITION).unwrap()
     }
 
+    fn absolute_eval(&self, rel_eval: i32) -> i32 {
+        if self.turn == PieceColor::White {
+            rel_eval
+        } else {
+            -rel_eval
+        }
+    }
+
+    ///Just to make naming consistent
+    fn relative_eval(&self, abs_eval: i32) -> i32 {
+        self.absolute_eval(abs_eval)
+    }
+
     ///Get index to transposition table, depending on TRANSPOSITION_TABLE_SIZE
     ///
     /// Zobrist keys are 64 bits. But to index the hashmap we use a smaller subset of this and accept hash collisions.
-    /// We must confirm that the 64 bit zobrist keys match before using any value stored in the hashmap.
+    /// Caller must confirm that the 64 bit zobrist keys match before using any value stored in the hashmap.
     fn transposition_table_index(&self) -> u32 {
         (self.zobrist.hash % TRANSPOSITION_TABLE_SIZE as u64) as u32
     }
 
-    fn get_transposition_entry<'a>(
+    ///This only returns Some if entry.key == self.zobrist.hash
+    pub fn get_transposition_entry<'a>(
         &self,
         transposition_table: &'a HashMap<u32, TranspositionEntry>,
     ) -> Option<&'a TranspositionEntry> {
@@ -68,13 +82,47 @@ impl BoardState {
         None
     }
 
-    ///Scheme: Always replace
+    ///Returns Some if there is an entry for the current hash that
+    /// <ul>
+    /// <li>matches the full zobrist key</li>
+    /// <li>has entry.depth of at least depth</li>
+    /// <li>matches the given flag</li>
+    /// </ul>
+    ///
+    /// Note this returns the exact entry, so in particular the evaluation is stored absolutely.
+    fn get_matching_transposition_entry<'a>(
+        &self,
+        depth: u32,
+        flag: EvaluationFlag,
+        transposition_table: &'a HashMap<u32, TranspositionEntry>,
+    ) -> Option<&'a TranspositionEntry> {
+        // eprintln!("start get_matching_tt");
+        if let Some(entry) = self.get_transposition_entry(transposition_table) {
+            if entry.depth >= depth && entry.flag == flag {
+                // eprintln!("return matching entry: {:?}", entry);
+                return Some(entry);
+            }
+        }
+        None
+    }
+
+    ///Scheme: Keep deeper
+    /// todo: vielleicht auch berücksichtigen, ob new einen move speichern würde
+    ///
+    /// <b> Evaluation must be positive for white!</b>
     fn update_transposition_table(
         &self,
         transposition_table: &mut HashMap<u32, TranspositionEntry>,
-        entry: TranspositionEntry,
+        new_entry: TranspositionEntry,
     ) {
-        transposition_table.insert(self.transposition_table_index(), entry);
+        // eprintln!("start update_tt");
+        if let Some(old_entry) = self.get_transposition_entry(transposition_table) {
+            if old_entry.depth >= new_entry.depth {
+                return;
+            }
+        }
+        // eprintln!("tt updated: {:?}", new_entry);
+        transposition_table.insert(self.transposition_table_index(), new_entry);
     }
 
     pub fn threatened(&self, victim_color: PieceColor, field: Field) -> bool {
@@ -96,7 +144,7 @@ impl BoardState {
 
         for m in self
             .board
-            .pseudo_legal_rook_moves(victim_color, field, true)
+            .pseudo_legal_rook_moves(victim_color, field, true, false)
         {
             let Field { rank, file } = m.to;
             if let Square::Full(p) = self.board.at(rank, file) {
@@ -110,7 +158,7 @@ impl BoardState {
 
         for m in self
             .board
-            .pseudo_legal_bishop_moves(victim_color, field, true)
+            .pseudo_legal_bishop_moves(victim_color, field, true, false)
         {
             let Field { rank, file } = m.to;
             if let Square::Full(p) = self.board.at(rank, file) {
@@ -580,6 +628,17 @@ impl BoardState {
             hash_history: hashes,
         })
     }
+
+    pub fn print_all_moves(&self) {
+        let mut ply = 2;
+        for m in self.moves.iter() {
+            if ply % 2 == 0 {
+                print!("{}. ", ply / 2);
+            }
+            print!("{} ", m);
+            ply += 1;
+        }
+    }
 }
 
 ///Consumes trailing whitespace, if any.
@@ -646,7 +705,7 @@ impl Default for BoardState {
 ///If move_type==Castle, from must contain the king's position!
 /// to is ignored.
 /// todo: use piece in more places instead of calling at() with the from field.
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Move {
     pub from: Field,
     pub to: Field,
@@ -709,7 +768,7 @@ impl Ord for Move {
 
 impl Display for Move {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}{}", self.from, self.to)
+        write!(f, "{}{}{}", self.piece.letter(), self.from, self.to)
     }
 }
 
@@ -879,11 +938,23 @@ impl Piece {
             6
         }
     }
+
+    pub fn letter(&self) -> &str {
+        match self.kind {
+            PieceKind::Pawn => "",
+            PieceKind::Bishop => "B",
+            PieceKind::Knight => "N",
+            PieceKind::Rook => "R",
+            PieceKind::Queen => "Q",
+            PieceKind::King => "K",
+        }
+    }
 }
 
 ///None means no move has been stored
 ///
 /// positive eval <=> white advantage
+#[derive(Debug)]
 pub struct TranspositionEntry {
     zobrist_key: u64,
     depth: u32,
@@ -1038,7 +1109,7 @@ pub enum Error {
     #[error("cannot parse symbol")]
     Parse,
 }
-
+/*
 #[cfg(test)]
 mod tests {
     use crate::evaluation::evaluate_rel;
@@ -1426,3 +1497,4 @@ mod tests {
         assert_eq!(fields, v2);
     }
 }
+*/

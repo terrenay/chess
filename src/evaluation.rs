@@ -285,7 +285,7 @@ pub fn checkmate(
         Some(legal_moves) => {
             // eprintln!("legal moves given");
             if state.check(state.turn) && legal_moves.is_empty() {
-                // eprintln!("mate");
+                // eprintln!("mate (precomputed)");
                 (Some(-i32::MAX), Some(legal_moves))
             } else {
                 // eprintln!("not mate, moves: {}", legal_moves.first().unwrap());
@@ -305,7 +305,8 @@ pub fn checkmate(
             let legal_moves = state.generate_legal_moves(true, false);
 
             if legal_moves.is_empty() {
-                // eprintln!("mate");
+                // eprintln!("mate (newly) in position:");
+                // state.draw_board(true);
                 (Some(-i32::MAX), Some(legal_moves))
             } else {
                 // eprintln!("not mate, moves: {}", legal_moves.first().unwrap());
@@ -356,6 +357,7 @@ fn draw(
     }
 
     if state.threefold_repetition() {
+        // eprintln!("draw by 3-fold");
         return (Some(0), legal_moves);
     }
 
@@ -377,6 +379,7 @@ fn draw(
     } else if no_legal_moves(state) {
         // eprintln!("legal moves NOT given but lazily computed and no move found");
         if assume_not_checkmate {
+            // eprintln!("stalemate");
             (Some(0), None)
         } else {
             unimplemented!()

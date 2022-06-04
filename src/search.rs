@@ -24,37 +24,82 @@ impl BoardState {
         beta: i32,
         transposition_table: &mut HashMap<u32, TranspositionEntry>,
         stop_receiver: &Receiver<bool>,
-    ) -> (Vec<Move>, i32) {
+    ) -> i32 {
         // eprintln!("--Start depth {}. a: {}. b: {}--", depth, alpha, beta);
 
-        /*Accessing the transposition table */
-
-        if let Some(entry) = self.get_transposition_entry(transposition_table) {
-            if entry.depth >= depth {
-                if entry.flag == EvaluationFlag::Exact {
-                    let rel_eval = if self.turn == PieceColor::White {
-                        entry.eval
-                    } else {
-                        -entry.eval
-                    };
-                    if entry.best_move.is_some() {
-                        // eprintln!("From tt");
-                        return (vec![entry.best_move.clone().unwrap()], rel_eval);
-                    } else {
-                        // eprintln!("in tt but no move");
-                    }
-                }
-            }
-        }
+        /*Accessing the transposition table. best_move is None only in horizon nodes and end_of_game nodes.
+        Therefore */
 
         let legal_moves = self.generate_legal_moves(true, false);
 
         let (end_of_game_eval, legal_moves) = end_of_game(self, Some(legal_moves));
 
         if let Some(v) = end_of_game_eval {
-            return (vec![], v);
-        } else if depth == 0 {
-            let res = self.quiescence_search_rel(
+            let entry = TranspositionEntry::new(
+                self.zobrist.hash,
+                depth,
+                self.absolute_eval(v),
+                EvaluationFlag::Exact,
+                None,
+            );
+            self.update_transposition_table(transposition_table, entry);
+            return v;
+        }
+
+        /*Unfortunately we have to check for end of game before getting values from the transposition table.
+        That is because a position which has a threefold repetition draw incoming in the next move has the same
+        zobrist hash as one without such a threat. Does getting the tt value from a position without the threat would
+        lead to incorrect play and allow the opponent to force a draw. */
+        if let Some(entry) =
+            self.get_matching_transposition_entry(depth, EvaluationFlag::Exact, transposition_table)
+        {
+            /*eprintln!(
+                "Get eval from TT (exact). Contains best_move: {:?}",
+                entry.best_move
+            );*/
+            return self.relative_eval(entry.eval);
+        }
+
+        //todo schöner kombinieren
+        if let Some(entry) = self.get_matching_transposition_entry(
+            depth,
+            EvaluationFlag::LowerBound,
+            transposition_table,
+        ) {
+            /*eprintln!(
+                "Get eval from TT (lower bound). Contains best_move: {:?}",
+                entry.best_move
+            );*/
+            let rel_eval = self.relative_eval(entry.eval);
+            if rel_eval >= beta {
+                // eprintln!("tt better than beta->return");
+                return rel_eval;
+            }
+            // eprintln!("tt worse than beta.");
+        }
+
+        //todo schöner kombinieren
+        if let Some(entry) = self.get_matching_transposition_entry(
+            depth,
+            EvaluationFlag::UpperBound,
+            transposition_table,
+        ) {
+            /*eprintln!(
+                "Get eval from TT (upper bound). Contains best_move: {:?}",
+                entry.best_move
+            );*/
+            let rel_eval = self.relative_eval(entry.eval);
+            if rel_eval <= alpha {
+                // eprintln!("tt worse than alpha->return");
+                return rel_eval;
+            }
+            // eprintln!("tt better than alpha");
+        }
+
+        if depth == 0 {
+            //den ganzen teil hier in quiescence reinnehmen! mit legal=issome
+            debug_assert!(legal_moves.is_some());
+            return self.quiescence_search_rel(
                 10,
                 alpha,
                 beta,
@@ -62,36 +107,21 @@ impl BoardState {
                 transposition_table,
                 stop_receiver,
             );
-
-            let flag = if res.1 <= alpha {
-                EvaluationFlag::LowerBound
-            } else if res.1 >= beta {
-                EvaluationFlag::UpperBound
-            } else {
-                EvaluationFlag::Exact
-            };
-
-            let best_move = if res.0.is_empty() {
-                None
-            } else {
-                assert_eq!(flag, EvaluationFlag::Exact);
-                Some(res.0.first().unwrap().clone())
-            };
-
-            let entry = TranspositionEntry::new(self.zobrist.hash, 0, res.1, flag, best_move);
-            self.update_transposition_table(transposition_table, entry);
-            return res;
         }
 
-        let mut best_line = vec![];
+        let mut best_move = None;
         let mut best_eval = -i32::MAX;
         let legal_moves = legal_moves.unwrap();
         debug_assert!(!legal_moves.is_empty());
 
+        //If no move improves alpha, we don't really know the evaluation. We only know it's worse than alpha, so we set the
+        //upper bound flag, which means the evaluation stored is an upper bound on the real evaluation of this position.
+        let mut flag = EvaluationFlag::UpperBound;
+
         for m in legal_moves {
             match stop_receiver.try_recv() {
                 Err(mpsc::TryRecvError::Disconnected) | Ok(_) => {
-                    return (vec![], best_eval);
+                    return best_eval;
                 }
                 _ => (),
             }
@@ -99,24 +129,19 @@ impl BoardState {
             self.make(&m);
             debug_assert_eq!(self.zobrist.hash, ZobristState::from_board_state(self).hash);
 
-            if best_line.is_empty() {
-                best_line.push(m.clone());
+            if best_move.is_none() {
+                best_move = Some(m.clone());
             }
-            //self.draw_board(true);
-            let (new_line, new_eval) =
-                self.negamax(depth - 1, -beta, -alpha, transposition_table, stop_receiver);
-            let new_eval = -new_eval; //negate opponent's evaluation
+
+            // self.draw_board(true);
+            let new_eval =
+                -self.negamax(depth - 1, -beta, -alpha, transposition_table, stop_receiver);
 
             if new_eval > best_eval {
                 // eprintln!("Depth {}, best_eval now {}", depth, new_eval);
                 best_eval = new_eval;
-                best_line = new_line;
-                best_line.push(m);
-                /*eprintln!("Updated best_line to: ");
-                for v in best_line.iter() {
-                    eprint!("{} - ", v);
-                }
-                eprintln!();*/
+                best_move = Some(m);
+                // eprintln!();
             }
 
             /*If this move leads to a position with a better value than beta, we can stop.
@@ -126,23 +151,36 @@ impl BoardState {
 
             /*If this move increases alpha, we store it as our new best move. */
 
+            /*Possible error: shouldn't we return beta if evaluation is greater than beta? Like in quiescence? */
+
             if new_eval >= beta {
                 // eprintln!("Move too good, outside beta cutoff");
                 self.unmake();
+                //If this move has an evaluation greater than beta, we don't know the real score. We only know it's at least beta.
+                flag = EvaluationFlag::LowerBound;
                 break;
             } else if new_eval > alpha {
                 // eprintln!("alpha updated");
                 alpha = new_eval;
+                flag = EvaluationFlag::Exact;
             }
 
             self.unmake();
         }
-        /*  eprintln!("--End depth {}. Return line: --", depth);
-        for v in best_line.iter() {
-            eprint!("{} - ", v);
-        }*/
+        // eprintln!("--End depth {}. Return move: {:?}", depth, best_move);
 
-        (best_line, best_eval)
+        /*Update transposition table after all moves have been searched. */
+
+        let entry = TranspositionEntry::new(
+            self.zobrist.hash,
+            depth,
+            self.absolute_eval(best_eval),
+            flag,
+            best_move,
+        );
+        self.update_transposition_table(transposition_table, entry);
+
+        best_eval
     }
 
     ///Only call this function at horizon nodes.
@@ -164,7 +202,7 @@ impl BoardState {
         legal_moves_from_negamax: Option<Vec<Move>>,
         transposition_table: &mut HashMap<u32, TranspositionEntry>,
         stop_receiver: &Receiver<bool>,
-    ) -> (Vec<Move>, i32) {
+    ) -> i32 {
         //todo: Problem: für checkmate / draw muss ich alle moves generieren, aber dann verliere ich den ganzen vorteil der
         //quiescence search (die ja nur captures generieren müsste)
         /*lösung: könnte noch ein zweites argument mit legal_captures machen. problem ist aktuell nur noch, dass ich für stalemate
@@ -180,7 +218,12 @@ impl BoardState {
         generated all legal moves for the current position. This saves us from generating them again.
         Therefore, if and only if this function is called from negamax, legal_moves is Some.*/
 
+        /*eprintln!(
+            "start quiescence depth {}, a: {}, b: {}",
+            depth, alpha, beta
+        );*/
         let legal_moves;
+        let horizon_node = legal_moves_from_negamax.is_some();
 
         match legal_moves_from_negamax {
             Some(m) => legal_moves = Some(m),
@@ -188,7 +231,12 @@ impl BoardState {
                 let (end_of_game_eval, m) = end_of_game(self, None);
                 legal_moves = m;
                 if let Some(v) = end_of_game_eval {
-                    return (vec![], v);
+                    // eprintln!("quiescence says EOG");
+                    if v > beta {
+                        eprintln!("return outside alpha beta");
+                    }
+                    self.quiescence_update_table(horizon_node, v, None, transposition_table);
+                    return v;
                 }
             }
         }
@@ -196,26 +244,29 @@ impl BoardState {
         /*Since we know the position is not checkmate or draw, we don't compute that again in the static evaluation. */
 
         let standing_pat = evaluate_rel(self, true);
+        // eprintln!("standing pat: {}", standing_pat);
 
         /*If this position is so good it can't be reached, we don't consider it further. */
 
         if standing_pat >= beta {
-            return (vec![], beta);
+            self.quiescence_update_table(horizon_node, beta, None, transposition_table);
+            return beta;
         }
 
         /*Still remember the beta cutoff. */
 
         if depth == 0 {
-            return (vec![], Ord::min(standing_pat, beta));
+            //hier kann tt nicht geupdatet werden, weil von nega nicht mit depth=0 gecalled wird. und wir wollen nur in quiescence
+            //root den tt updaten
+            return Ord::min(standing_pat, beta);
         }
 
         /*If this position improves alpha. */
 
         if standing_pat > alpha {
+            // eprintln!("NMH: set alpha to {}", standing_pat);
             alpha = standing_pat;
         }
-
-        let mut best_line = vec![];
 
         /*Either the checkmate verification already computed all legal moves, or we compute only captures. */
 
@@ -227,10 +278,13 @@ impl BoardState {
             None => self.generate_legal_moves(true, true),
         };
 
+        //set to something if there is a capture
+        let mut best_move = captures.first().cloned();
+
         for m in captures {
             match stop_receiver.try_recv() {
                 Err(mpsc::TryRecvError::Disconnected) | Ok(_) => {
-                    return (best_line, alpha);
+                    return alpha;
                 }
                 _ => (),
             }
@@ -238,7 +292,7 @@ impl BoardState {
             self.make(&m);
             debug_assert_eq!(self.zobrist.hash, ZobristState::from_board_state(self).hash);
 
-            let (new_line, score) = self.quiescence_search_rel(
+            let score = -self.quiescence_search_rel(
                 depth - 1,
                 -beta,
                 -alpha,
@@ -246,28 +300,56 @@ impl BoardState {
                 transposition_table,
                 stop_receiver,
             );
-            let score = -score;
 
             //If this line quiets down in a position with a score greater than beta, the opponent will not
             //play a move that would lead to the current position, so we are done.
 
             if score >= beta {
+                // eprintln!("{} better than beta ({})", score, beta);
+                best_move = Some(m);
                 self.unmake();
-                return (new_line, beta);
+                self.quiescence_update_table(horizon_node, beta, best_move, transposition_table);
+                return beta;
             }
 
-            //If this line is an improvement over the previous best line:
+            //If this line is an improvement over the previous best line (and over the horizon position):
 
             if score > alpha {
+                // eprintln!("raise alpha");
                 alpha = score;
-                best_line = new_line;
-                best_line.push(m);
+                best_move = Some(m);
+            } else {
+                // eprintln!("worse than beta");
             }
 
             self.unmake();
         }
 
-        (best_line, alpha)
+        /*Store horizon node's best move in transposition table. This is guaranteed to be a horizon node,
+        because legal_moves is only Some if this function was called from negamax (which only calls quiescence at depth 0). */
+
+        /*Correctness: I'm not sure whether flag should always be exact. I think we assume that this is like a static
+        evaluation which is always correct, even though internally quiescence uses beta cutoffs as well. */
+
+        self.quiescence_update_table(horizon_node, alpha, best_move, transposition_table);
+        // eprintln!("end quiescence");
+        alpha
+    }
+
+    fn quiescence_update_table(
+        &self,
+        horizon_node: bool,
+        rel_eval: i32,
+        best_move: Option<Move>,
+        transposition_table: &mut HashMap<u32, TranspositionEntry>,
+    ) {
+        if horizon_node {
+            let flag = EvaluationFlag::Exact;
+            let eval = self.absolute_eval(rel_eval);
+            let entry = TranspositionEntry::new(self.zobrist.hash, 0, eval, flag, best_move);
+            // eprintln!("update table from horizon node:");
+            self.update_transposition_table(transposition_table, entry);
+        }
     }
 
     /// Never takes longer than time_limit.
@@ -281,9 +363,10 @@ impl BoardState {
         &self,
         time_limit_millis: u64,
         min_depth: Option<u32>,
-    ) -> (Vec<Move>, i32) {
+    ) -> (i32, Option<Move>) {
         //todo!("mit option eine minimum depth angeben und als standalone benutzen");
-        let mut res = (vec![], 42); //default not used because the loop always runs at least once
+        let mut eval = 42; //default not used because the loop always runs at least once
+        let mut best_move = None;
         let mut depth = 1; //Root is frontier node. All children (after all of root's possible moves) are evaluated
         let max_duration = Duration::from_millis(time_limit_millis);
         let start = Instant::now();
@@ -314,25 +397,65 @@ impl BoardState {
 
             thread::spawn(move || {
                 let mut table = table_lock_clone.lock().unwrap();
-                let mut worker_res =
+
+                let worker_eval =
                     board_clone.negamax(depth, -i32::MAX, i32::MAX, &mut table, &stop_receiver);
-                worker_res.0.reverse();
-                sender.send(worker_res);
+
+                /*let exact_set: Vec<&TranspositionEntry> = table
+                    .values()
+                    .filter(|&e| e.flag == EvaluationFlag::Exact)
+                    .collect();
+                let no_moves_exact = exact_set.iter().filter(|e| e.best_move.is_none()).count();
+                let upper_set: Vec<&TranspositionEntry> = table
+                    .values()
+                    .filter(|&e| e.flag == EvaluationFlag::UpperBound)
+                    .collect();
+                let no_moves_upper = upper_set.iter().filter(|e| e.best_move.is_none()).count();
+                let lower_set: Vec<&TranspositionEntry> = table
+                    .values()
+                    .filter(|&e| e.flag == EvaluationFlag::LowerBound)
+                    .collect();
+                let no_moves_lower = lower_set.iter().filter(|e| e.best_move.is_none()).count();
+
+                println!("The table contains {} entries.", table.len());
+                println!("The table contains {} exact entries.", exact_set.len());
+                println!("Of which {} contain no move...", no_moves_exact);
+                println!("The table contains {} upper bounds.", upper_set.len());
+                println!("Of which {} contain no move...", no_moves_upper);
+                println!("The table contains {} lower bounds.", lower_set.len());
+                println!("Of which {} contain no move...", no_moves_lower);*/
+
+                let worker_best_move = match board_clone.get_transposition_entry(&table) {
+                    Some(entry) => entry.best_move.clone(),
+                    None => None,
+                };
+
+                sender.send((worker_eval, worker_best_move));
             });
 
             loop {
                 if start.elapsed() >= max_duration && depth > min_depth.or(Some(1)).unwrap() {
+                    //Tell the worker thread to stop
                     stop_sender.send(true).unwrap();
+                    //Wait for it to really stop
+                    //future.join();
                     break 'outer;
                 }
 
-                if let Ok(worker_res) = receiver.try_recv() {
-                    res = worker_res;
+                if let Ok((worker_eval, worker_best_move)) = receiver.try_recv() {
+                    eval = worker_eval;
+                    best_move = worker_best_move;
                     //let table = Arc::clone(&table_lock);
                     //let table = table.lock().unwrap();
-                    println!("Depth {}: {:#?}.", depth, res.1);
-                    for v in res.0.iter() {
-                        print!("{} ", v);
+                    if best_move.is_some() {
+                        println!(
+                            "Depth {}: {:#?}. Best move: {}",
+                            depth,
+                            eval,
+                            best_move.as_ref().unwrap()
+                        );
+                    } else {
+                        println!("Depth {}: {:#?}. Best move: None", depth, eval);
                     }
                     println!();
                     //todo!("abbrechen wenn mate gefunden");
@@ -348,7 +471,7 @@ impl BoardState {
             //Only break if we have fully searched at least to a depth of 1.
             depth += 1;
 
-            if res.1 == i32::MAX || res.1 == -i32::MAX {
+            if eval == i32::MAX || eval == -i32::MAX {
                 eprintln!("Stop deepening because forced mate has been found");
                 break;
             }
@@ -360,6 +483,6 @@ impl BoardState {
             start.elapsed().as_millis()
         );
 
-        res
+        (eval, best_move)
     }
 }

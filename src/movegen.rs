@@ -148,6 +148,13 @@ impl BoardState {
         self.moves.push(m.clone());
         let old_castling_rights = self.castling_rights.clone();
         if let Square::Full(moving_piece) = self.board.at(m.from.rank, m.from.file) {
+            if moving_piece != m.piece {
+                self.draw_board(true);
+                for m in self.moves.iter() {
+                    print!("{} ", m);
+                }
+                panic!()
+            }
             match m.move_type {
                 MoveType::Default => {}
 
@@ -378,10 +385,12 @@ impl Board {
                     Ok(self.pseudo_legal_knight_moves(p.color, from, only_captures))
                 }
                 PieceKind::Bishop => {
-                    Ok(self.pseudo_legal_bishop_moves(p.color, from, only_captures))
+                    Ok(self.pseudo_legal_bishop_moves(p.color, from, only_captures, false))
                 }
                 PieceKind::King => Ok(self.pseudo_legal_king_moves(p.color, from, only_captures)),
-                PieceKind::Rook => Ok(self.pseudo_legal_rook_moves(p.color, from, only_captures)),
+                PieceKind::Rook => {
+                    Ok(self.pseudo_legal_rook_moves(p.color, from, only_captures, false))
+                }
                 PieceKind::Queen => Ok(self.pseudo_legal_queen_moves(p.color, from, only_captures)),
             },
             _ => Err(Error::NoPieceOnField(Field::new(rank, file))),
@@ -531,9 +540,14 @@ impl Board {
         color: PieceColor,
         from: Field,
         only_captures: bool,
+        queen: bool,
     ) -> Vec<Move> {
         let Field { rank, file } = from;
-        let piece = Piece::rook(color);
+        let piece = if queen {
+            Piece::queen(color)
+        } else {
+            Piece::rook(color)
+        };
         //Upwards
         let mut v = vec![];
         for i in rank + 1..=8 {
@@ -575,11 +589,16 @@ impl Board {
         color: PieceColor,
         from: Field,
         only_captures: bool,
+        queen: bool,
     ) -> Vec<Move> {
         let mut v = vec![];
         let mut diff = 1;
         let Field { rank, file } = from;
-        let piece = Piece::bishop(color);
+        let piece = if queen {
+            Piece::queen(color)
+        } else {
+            Piece::bishop(color)
+        };
 
         //Up right
         while rank + diff <= 8 && file + diff <= 8 {
@@ -633,8 +652,8 @@ impl Board {
         from: Field,
         only_captures: bool,
     ) -> Vec<Move> {
-        let mut v = self.pseudo_legal_rook_moves(color, from, only_captures);
-        v.extend(self.pseudo_legal_bishop_moves(color, from, only_captures));
+        let mut v = self.pseudo_legal_rook_moves(color, from, only_captures, true);
+        v.extend(self.pseudo_legal_bishop_moves(color, from, only_captures, true));
         v
     }
     ///This function is intended to be used in a loop for a sliding piece which follows that
