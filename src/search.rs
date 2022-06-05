@@ -30,9 +30,10 @@ impl BoardState {
         /*Accessing the transposition table. best_move is None only in horizon nodes and end_of_game nodes.
         Therefore */
 
-        let legal_moves = self.generate_legal_moves(true, false);
+        let legal_moves = self.generate_legal_moves(true, false, Some(transposition_table));
 
-        let (end_of_game_eval, legal_moves) = end_of_game(self, Some(legal_moves));
+        let (end_of_game_eval, legal_moves) =
+            end_of_game(self, Some(legal_moves), Some(transposition_table));
 
         if let Some(v) = end_of_game_eval {
             let entry = TranspositionEntry::new(
@@ -228,7 +229,7 @@ impl BoardState {
         match legal_moves_from_negamax {
             Some(m) => legal_moves = Some(m),
             None => {
-                let (end_of_game_eval, m) = end_of_game(self, None);
+                let (end_of_game_eval, m) = end_of_game(self, None, Some(transposition_table));
                 legal_moves = m;
                 if let Some(v) = end_of_game_eval {
                     // eprintln!("quiescence says EOG");
@@ -275,7 +276,7 @@ impl BoardState {
                 .into_iter()
                 .filter(|m| m.move_type == MoveType::Capture)
                 .collect(),
-            None => self.generate_legal_moves(true, true),
+            None => self.generate_legal_moves(true, true, Some(transposition_table)),
         };
 
         //set to something if there is a capture

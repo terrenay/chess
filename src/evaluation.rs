@@ -1,6 +1,7 @@
 //#![warn(clippy::all, clippy::pedantic, clippy::nursery, clippy::cargo)]
 
 use crate::*;
+use std::collections::HashMap;
 //All piece tables are from white's perspective.
 //They give an offset (in centipawns) from the piece's base value.
 
@@ -216,7 +217,7 @@ const fn gamephase_value(kind: PieceKind) -> i32 {
 /// <b> do not call on a position where current player wins checkmate!</b>
 pub fn evaluate_rel(state: &mut BoardState, assume_not_end_of_game: bool) -> i32 {
     if !assume_not_end_of_game {
-        if let (Some(eval), _) = end_of_game(state, None) {
+        if let (Some(eval), _) = end_of_game(state, None, None) {
             return eval;
         }
     }
@@ -279,6 +280,7 @@ pub fn evaluate_rel(state: &mut BoardState, assume_not_end_of_game: bool) -> i32
 pub fn checkmate(
     state: &mut BoardState,
     legal_moves: Option<Vec<Move>>,
+    transposition_table: Option<&HashMap<u32, TranspositionEntry>>,
 ) -> (Option<i32>, Option<Vec<Move>>) {
     // eprintln!("start checkmate");
     match legal_moves {
@@ -302,7 +304,7 @@ pub fn checkmate(
 
             // eprintln!("check, generating all legal moves...");
 
-            let legal_moves = state.generate_legal_moves(true, false);
+            let legal_moves = state.generate_legal_moves(true, false, transposition_table);
 
             if legal_moves.is_empty() {
                 // eprintln!("mate (newly) in position:");
@@ -325,10 +327,11 @@ computes all legal moves and returns (_,Some(lm)), which quiescence then filters
 pub fn end_of_game(
     state: &mut BoardState,
     legal_moves: Option<Vec<Move>>,
+    transposition_table: Option<&HashMap<u32, TranspositionEntry>>,
 ) -> (Option<i32>, Option<Vec<Move>>) {
     // state.draw_board(true);
     // eprintln!("start end_of_game in position above");
-    let (mate_eval, legal_moves) = checkmate(state, legal_moves);
+    let (mate_eval, legal_moves) = checkmate(state, legal_moves, transposition_table);
 
     if mate_eval.is_some() {
         // eprintln!("end end_of_game (checkmate)");
@@ -396,7 +399,7 @@ fn draw(
 /// todo: bauern, knight etc der reihe nach, und jedes mal dazwischen maken und schauen ob es legal ist. sofort abbrechen beim
 /// ersten legalen.
 fn no_legal_moves(state: &mut BoardState) -> bool {
-    for m in state.generate_pseudo_legal_moves(false, false) {
+    for m in state.generate_pseudo_legal_moves(false, false, None) {
         state.make(&m);
         if !state.check(state.turn.opposite()) {
             state.unmake();

@@ -29,8 +29,11 @@ const STARTING_POSITION: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w K
 //Mate in 3
 //const STARTING_POSITION: &str = "7R/2N1P3/8/8/8/8/k6K/8 w";
 
-//21 ply search should give king to b1. Test transposition table
+//21 ply search should give king to b1. Test transposition table. Fine#70
 //const STARTING_POSITION: &str = "8/k7/3p4/p2P1p2/P2P1P2/8/8/K7 w";
+
+//Mate in 3: HAKMEM70 (fails until promotion to knight is generated)
+//const STARTING_POSITION: &str = "5B2/6P1/1p6/8/1N6/kP6/2K5/8 w";
 
 const TRANSPOSITION_TABLE_SIZE: usize = 1_048_583;
 
