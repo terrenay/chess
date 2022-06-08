@@ -35,7 +35,9 @@ const STARTING_POSITION: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w K
 //Mate in 3: HAKMEM70 (fails until promotion to knight is generated)
 //const STARTING_POSITION: &str = "5B2/6P1/1p6/8/1N6/kP6/2K5/8 w";
 
-const TRANSPOSITION_TABLE_SIZE: usize = 1_048_583;
+//const TRANSPOSITION_TABLE_SIZE: usize = 1_048_583;
+//const TRANSPOSITION_TABLE_SIZE: usize = 4_910_069; //too big?
+const TRANSPOSITION_TABLE_SIZE: usize = 18_000_041;
 
 #[derive(Clone)]
 pub struct BoardState {
@@ -125,7 +127,7 @@ impl BoardState {
         None
     }
 
-    ///Scheme: Keep deeper
+    ///Scheme: Keep deeper. If same depth, keep exact over lowerbound over upperbound.
     /// todo: vielleicht auch berücksichtigen, ob new einen move speichern würde
     ///
     /// <b> Evaluation must be positive for white!</b>
@@ -136,7 +138,12 @@ impl BoardState {
     ) {
         // eprintln!("start update_tt");
         if let Some(old_entry) = self.get_transposition_entry(transposition_table) {
-            if old_entry.depth >= new_entry.depth {
+            //Always keep deeper entry
+            if old_entry.depth > new_entry.depth {
+                return;
+            }
+            //If same depth, keep the one with the better flag.
+            if old_entry.depth == new_entry.depth && old_entry.flag >= new_entry.flag {
                 return;
             }
         }

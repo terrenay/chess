@@ -465,12 +465,14 @@ impl BoardState {
                     }
 
                     let mut entry = board_clone.get_transposition_entry(&table).cloned();
+                    let mut moves_shown = 0;
                     while entry.is_some() {
                         let m = entry.unwrap().best_move;
-                        if m.is_some() {
+                        if m.is_some() && moves_shown < depth {
                             print!("{} ", m.as_ref().unwrap());
                             board_clone.make(&m.unwrap());
                             entry = board_clone.get_transposition_entry(&table).cloned();
+                            moves_shown += 1;
                         } else {
                             break;
                         }

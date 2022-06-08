@@ -52,16 +52,16 @@ impl BoardState {
         benefit. dort nur vorherige best moves aus transposition table berücksichtigen.) */
         if sort {
             v.sort();
-            if let Some(entry) =
-                self.get_transposition_entry(transposition_table.expect("needs tt to sort"))
-            {
-                if let Some(shallow_best) = &entry.best_move {
-                    //If the tt-entry appears in v, we can be sure it is not an index collision. In this case, we move it to the
-                    //beginning to improve alpha-beta-pruning.
-                    //We have to remove the old v-entry, since the tt entry might be evicted before the second v-entry.
-                    if let Some(old_index) = v.iter().position(|m| m == shallow_best) {
-                        v.remove(old_index);
-                        v.insert(0, shallow_best.clone());
+            if let Some(table) = transposition_table {
+                if let Some(entry) = self.get_transposition_entry(table) {
+                    if let Some(shallow_best) = &entry.best_move {
+                        //If the tt-entry appears in v, we can be sure it is not an index collision. In this case, we move it to the
+                        //beginning to improve alpha-beta-pruning.
+                        //We have to remove the old v-entry, since the tt entry might be evicted before the second v-entry.
+                        if let Some(old_index) = v.iter().position(|m| m == shallow_best) {
+                            v.remove(old_index);
+                            v.insert(0, shallow_best.clone());
+                        }
                     }
                 }
             }

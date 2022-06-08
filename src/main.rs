@@ -25,7 +25,7 @@ fn main() {
                 count += 1;
                 println!("-- WHITE TO MOVE --");
                 // let m = b.negamax_standalone(6).0;
-                let m = b.iterative_deepening_nega(Some(2000), None).1;
+                let m = b.iterative_deepening_nega(Some(1000), None).1;
                 if m.is_none() {
                     b.print_all_moves();
                     return;
@@ -37,7 +37,7 @@ fn main() {
                 println!("-- BLACK TO MOVE --");
                 //let m = b.minimax_standalone(6).0;
                 // let m = b.negamax_standalone(6).0;
-                let m = b.iterative_deepening_nega(Some(2000), None).1;
+                let m = b.iterative_deepening_nega(Some(1000), None).1;
                 if m.is_none() {
                     b.print_all_moves();
                     return;

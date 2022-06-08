@@ -7,11 +7,11 @@ use std::collections::HashMap;
 
 //From: https://www.chessprogramming.org/PeSTO%27s_Evaluation_Function
 
-#[derive(PartialEq, Eq, Debug, Clone)]
+#[derive(PartialEq, Eq, Debug, Clone, PartialOrd, Ord)]
 pub enum EvaluationFlag {
-    Exact,
     UpperBound,
     LowerBound,
+    Exact,
 }
 
 #[rustfmt::skip]
