@@ -35,8 +35,6 @@ const STARTING_POSITION: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w K
 //Mate in 3: HAKMEM70 (fails until promotion to knight is generated)
 //const STARTING_POSITION: &str = "5B2/6P1/1p6/8/1N6/kP6/2K5/8 w";
 
-//const TRANSPOSITION_TABLE_SIZE: usize = 1_048_583;
-//const TRANSPOSITION_TABLE_SIZE: usize = 4_910_069; //too big?
 const TRANSPOSITION_TABLE_SIZE: usize = 18_000_041;
 
 #[derive(Clone)]
@@ -46,12 +44,29 @@ pub struct BoardState {
     ply: u16,
     pub castling_rights: CastlingRights,
     zobrist: ZobristState,
+    en_passant: Option<Field>, //only used on the first move!
     moves: Vec<Move>,
     pub taken: Vec<Piece>,
     pub hash_history: Vec<u64>,
 }
 
 impl BoardState {
+    fn en_passant(&self) -> Option<Field> {
+        if let Some(last) = self.moves.last() {
+            if last.piece.kind == PieceKind::Pawn && (last.from.rank - last.to.rank).abs() == 2 {
+                if last.piece.color == PieceColor::White {
+                    return Some(Field::new(last.from.rank + 1, last.from.file));
+                } else {
+                    return Some(Field::new(last.from.rank - 1, last.from.file));
+                }
+            }
+            None
+        } else {
+            //On the first move we want to return the en_passant value given in the FEN string.
+            self.en_passant
+        }
+    }
+
     pub fn new() -> Self {
         Self::from_fen(STARTING_POSITION).unwrap()
     }
@@ -196,10 +211,7 @@ impl BoardState {
 
         //Pawns
 
-        for m in self
-            .board
-            .pseudo_legal_pawn_moves(victim_color, field, true)
-        {
+        for m in self.pseudo_legal_pawn_moves(victim_color, field, true) {
             let Field { rank, file } = m.to;
             if let Square::Full(p) = self.board.at(rank, file) {
                 if matches!(p.kind, PieceKind::Pawn) {
@@ -261,7 +273,10 @@ impl BoardState {
                 if let Square::Full(target) = self.board.at(m.to.rank, m.to.file) {
                     self.zobrist.change_piece(m.to, target);
                 } else {
-                    panic!("MoveType attack but empty target");
+                    self.zobrist.change_piece(
+                        m.get_en_passant_taken().unwrap(),
+                        Piece::pawn(moving_piece.color.opposite()),
+                    )
                 }
             }
             //Remove and put the rook if castling
@@ -404,37 +419,22 @@ impl BoardState {
 
         let mut chars = arg.chars();
 
-        let from_file = Board::file_letter_to_number(chars.next().ok_or(Error::Parse)?)? as i8;
-        let from_rank = chars
-            .next()
-            .ok_or(Error::Parse)?
-            .to_digit(10)
-            .ok_or(Error::Parse)? as i8;
+        let from = Self::parse_field(&mut chars)?;
 
-        if let Square::Full(p) = self.board.at(from_rank, from_file) {
+        if let Square::Full(p) = self.board.at(from.rank, from.file) {
             if p.color != self.turn {
                 eprintln!("{} to move!", self.turn.to_string().red());
-                return Err(Error::WrongColor(Field::new(from_rank, from_file)));
+                return Err(Error::WrongColor(from));
             }
         } else {
-            return Err(Error::NoPieceOnField(Field::new(from_rank, from_file)));
+            return Err(Error::NoPieceOnField(from));
         }
 
         //From here on we can be sure that it's the correct side to move and the square is
         //actually full.
-
-        let to_file = Board::file_letter_to_number(chars.next().ok_or(Error::Parse)?)? as i8;
-        let to_rank = chars
-            .next()
-            .ok_or(Error::Parse)?
-            .to_digit(10)
-            .ok_or(Error::Parse)? as i8;
-
-        let from = Field::new(from_rank, from_file);
-        let to = Field::new(to_rank, to_file);
+        let to = Self::parse_field(&mut chars)?;
 
         let mut v = self
-            .board
             .pseudo_legal_moves(from, false)
             .unwrap()
             .into_iter()
@@ -452,11 +452,11 @@ impl BoardState {
             if self.check(self.turn.opposite()) {
                 println!("You're in check!");
                 self.unmake();
-                return Err(Error::BadMoveTarget(Field::new(to_rank, to_file)));
+                return Err(Error::BadMoveTarget(to));
             }
             Ok(())
         } else {
-            Err(Error::BadMoveTarget(Field::new(to_rank, to_file)))
+            Err(Error::BadMoveTarget(to))
         }
     }
 
@@ -505,32 +505,36 @@ impl BoardState {
             print!("{}", rank);
             for file in 1..9 {
                 let square = self.board.at(rank, file);
+                //eprintln!("{},{}: {:?}", rank, file, square);
                 let field = Field::new(rank, file);
                 let tile = match square.unicode_str() {
-                    Some(s) => s,
+                    Some(s) => match square.color() {
+                        Some(PieceColor::White) => s.white(),
+                        Some(PieceColor::Black) => s.black(),
+                        _ => s.normal(),
+                    },
                     None => continue,
                 };
 
-                let mut tile = if (rank + file) % 2 == 0 {
-                    tile.on_truecolor(158, 93, 30) //black
+                let tile = if (rank + file) % 2 == 0 {
+                    // tile.on_black() //black
+                    tile.on_truecolor(200, 200, 200) //black
                 } else {
-                    tile.on_truecolor(155, 120, 70) //white
+                    tile.on_truecolor(230, 230, 230) //white
                 };
 
-                if show_prev {
+                let tile = if show_prev {
                     if let Some(last) = self.moves.last() {
                         if last.from == field || last.to == field {
-                            tile = tile.on_truecolor(122, 156, 70);
+                            tile.on_truecolor(122, 156, 70)
+                        } else {
+                            tile
                         }
+                    } else {
+                        tile
                     }
-                }
-
-                let tile = match square.color() {
-                    Some(color) => match color {
-                        PieceColor::Black => tile.black(),
-                        PieceColor::White => tile.white(),
-                    },
-                    None => tile,
+                } else {
+                    tile
                 };
 
                 print!("{}", tile);
@@ -543,7 +547,7 @@ impl BoardState {
         println!();
     }
 
-    ///Consumes one trailing whitespace, if any.
+    ///Consumes one trailing whitespace
     fn parse_board_fen(chars: &mut std::str::Chars) -> Result<Board, Error> {
         let mut board = Array2::<Square>::default((12, 12));
         let mut rank = 8;
@@ -613,7 +617,7 @@ impl BoardState {
         })
     }
 
-    ///Leave trailing whitespaces as they are
+    ///Consume one trailing whitespace
     fn parse_turn_fen(chars: &mut std::str::Chars) -> Result<PieceColor, Error> {
         let mut turn = PieceColor::White;
 
@@ -624,7 +628,77 @@ impl BoardState {
                 _ => return Err(Error::Parse),
             }
         };
+        chars.next();
         Ok(turn)
+    }
+
+    ///Consumes one trailing whitespace
+    /// Standard: Assume no castling rights.
+    fn parse_castling_rights_fen(
+        chars: &mut std::str::Chars,
+        board: &Board,
+    ) -> Result<CastlingRights, Error> {
+        let mut white_queen_castle_lost_ply = Some(0);
+        let mut black_queen_castle_lost_ply = Some(0);
+        let mut white_king_castle_lost_ply = Some(0);
+        let mut black_king_castle_lost_ply = Some(0);
+        let white_king = board.white_king;
+        let black_king = board.black_king;
+
+        for c in chars.by_ref() {
+            match c {
+                'K' => {
+                    assert!(white_king == Field::new(1, 5));
+                    assert!(board.piece_at(Field::new(1, 8), Piece::rook(PieceColor::White)));
+                    white_king_castle_lost_ply = None;
+                }
+                'Q' => {
+                    assert!(white_king == Field::new(1, 5));
+                    assert!(board.piece_at(Field::new(1, 1), Piece::rook(PieceColor::White)));
+                    white_queen_castle_lost_ply = None;
+                }
+                'k' => {
+                    assert!(black_king == Field::new(8, 5));
+                    assert!(board.piece_at(Field::new(8, 8), Piece::rook(PieceColor::Black)));
+                    black_king_castle_lost_ply = None;
+                }
+                'q' => {
+                    assert!(black_king == Field::new(8, 5));
+                    assert!(board.piece_at(Field::new(8, 1), Piece::rook(PieceColor::Black)));
+                    black_queen_castle_lost_ply = None;
+                }
+                ' ' => break,
+                '-' => {
+                    chars.next();
+                    break;
+                }
+                _ => return Err(Error::Parse),
+            }
+        }
+        Ok(CastlingRights {
+            white_queen_castle_lost_ply,
+            black_queen_castle_lost_ply,
+            white_king_castle_lost_ply,
+            black_king_castle_lost_ply,
+        })
+    }
+
+    ///Consume one trailing whitespace
+    fn parse_en_passant_fen(chars: &mut std::str::Chars) -> Option<Field> {
+        let field = Self::parse_field(chars);
+        chars.next();
+        field.ok()
+    }
+
+    ///Does not consume trailing whitespace  
+    fn parse_field(chars: &mut std::str::Chars) -> Result<Field, Error> {
+        let file = Board::file_letter_to_number(chars.next().ok_or(Error::Parse)?)? as i8;
+        let rank = chars
+            .next()
+            .ok_or(Error::Parse)?
+            .to_digit(10)
+            .ok_or(Error::Parse)? as i8;
+        Ok(Field::new(rank, file))
     }
 
     ///Standard: Assume no castling rights
@@ -635,13 +709,15 @@ impl BoardState {
 
         let turn = Self::parse_turn_fen(chars)?;
 
-        chars.by_ref().next(); //Consume the whitespace if it's there
+        let castling_rights = Self::parse_castling_rights_fen(chars, &board)?;
 
-        let castling_rights = parse_castling_rights_fen(chars, &board)?;
+        let en_passant = Self::parse_en_passant_fen(chars);
 
         let zobrist = ZobristState::from(&board, turn, &castling_rights);
 
         let hashes = vec![zobrist.hash];
+
+        //eprintln!("{:?}", board.board);
 
         Ok(Self {
             board,
@@ -649,6 +725,7 @@ impl BoardState {
             ply: 1,
             castling_rights,
             zobrist,
+            en_passant,
             moves: vec![],
             taken: vec![],
             hash_history: hashes,
@@ -673,53 +750,6 @@ impl BoardState {
     }
 }
 
-///Consumes trailing whitespace, if any.
-/// Standard: Assume no castling rights.
-fn parse_castling_rights_fen(
-    chars: &mut std::str::Chars,
-    board: &Board,
-) -> Result<CastlingRights, Error> {
-    let mut white_queen_castle_lost_ply = Some(0);
-    let mut black_queen_castle_lost_ply = Some(0);
-    let mut white_king_castle_lost_ply = Some(0);
-    let mut black_king_castle_lost_ply = Some(0);
-    let white_king = board.white_king;
-    let black_king = board.black_king;
-
-    for c in chars.by_ref() {
-        match c {
-            'K' => {
-                assert!(white_king == Field::new(1, 5));
-                assert!(board.piece_at(Field::new(1, 8), Piece::rook(PieceColor::White)));
-                white_king_castle_lost_ply = None;
-            }
-            'Q' => {
-                assert!(white_king == Field::new(1, 5));
-                assert!(board.piece_at(Field::new(1, 1), Piece::rook(PieceColor::White)));
-                white_queen_castle_lost_ply = None;
-            }
-            'k' => {
-                assert!(black_king == Field::new(8, 5));
-                assert!(board.piece_at(Field::new(8, 8), Piece::rook(PieceColor::Black)));
-                black_king_castle_lost_ply = None;
-            }
-            'q' => {
-                assert!(black_king == Field::new(8, 5));
-                assert!(board.piece_at(Field::new(8, 1), Piece::rook(PieceColor::Black)));
-                black_queen_castle_lost_ply = None;
-            }
-            ' ' => break,
-            _ => return Err(Error::Parse),
-        }
-    }
-    Ok(CastlingRights {
-        white_queen_castle_lost_ply,
-        black_queen_castle_lost_ply,
-        white_king_castle_lost_ply,
-        black_king_castle_lost_ply,
-    })
-}
-
 #[derive(Clone, Debug)]
 pub struct CastlingRights {
     pub white_queen_castle_lost_ply: Option<u16>,
@@ -737,6 +767,7 @@ impl Default for BoardState {
 ///If move_type==Castle, from must contain the king's position!
 /// to is ignored.
 /// todo: use piece in more places instead of calling at() with the from field.
+/// En passant: to is the position the moving pawn moved to. The position where the captured pawn was must be calculated.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Move {
     pub from: Field,
@@ -744,6 +775,7 @@ pub struct Move {
     piece: Piece,
     move_type: MoveType,
     promotion: Option<Piece>,
+    en_passant: bool,
 }
 
 impl Move {
@@ -754,6 +786,7 @@ impl Move {
             piece,
             move_type,
             promotion: None,
+            en_passant: false,
         }
     }
 
@@ -771,6 +804,31 @@ impl Move {
             piece,
             move_type,
             promotion: promo,
+            en_passant: false,
+        }
+    }
+
+    ///Generate a new en passant capture move.
+    const fn en_passant(from: Field, color: PieceColor, to: Field) -> Self {
+        Self {
+            from,
+            to,
+            piece: Piece::pawn(color),
+            move_type: MoveType::Capture,
+            promotion: None,
+            en_passant: true,
+        }
+    }
+
+    fn get_en_passant_taken(&self) -> Option<Field> {
+        if !self.en_passant {
+            return None;
+        }
+
+        if self.piece.color == PieceColor::White {
+            Some(Field::new(self.to.rank - 1, self.to.file))
+        } else {
+            Some(Field::new(self.to.rank + 1, self.to.file))
         }
     }
 }
@@ -943,14 +1001,33 @@ impl Piece {
         }
     }
 
-    const fn unicode_str(&self) -> &str {
-        match self.kind {
-            PieceKind::Pawn => "♟︎ ",
-            PieceKind::Bishop => "♝ ",
-            PieceKind::Knight => "♞ ",
-            PieceKind::Rook => "♜ ",
-            PieceKind::Queen => "♛ ",
-            PieceKind::King => "♚ ",
+    fn is_line(&self) -> bool {
+        self.kind == PieceKind::Rook || self.kind == PieceKind::Queen
+    }
+
+    fn is_diagonal(&self) -> bool {
+        self.kind == PieceKind::Bishop || self.kind == PieceKind::Queen
+    }
+
+    fn unicode_str(&self) -> &str {
+        if self.color == PieceColor::White {
+            match self.kind {
+                PieceKind::Pawn => "♙ ",
+                PieceKind::Bishop => "♗ ",
+                PieceKind::Knight => "♘ ",
+                PieceKind::Rook => "♖ ",
+                PieceKind::Queen => "♕ ",
+                PieceKind::King => "♔ ",
+            }
+        } else {
+            match self.kind {
+                PieceKind::Pawn => "♟ ",
+                PieceKind::Bishop => "♝ ",
+                PieceKind::Knight => "♞ ",
+                PieceKind::Rook => "♜ ",
+                PieceKind::Queen => "♛ ",
+                PieceKind::King => "♚ ",
+            }
         }
     }
 
@@ -1013,7 +1090,7 @@ impl TranspositionEntry {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Square {
     Full(Piece),
     Empty,
@@ -1029,7 +1106,7 @@ pub enum MoveType {
 }
 
 impl Square {
-    const fn unicode_str(&self) -> Option<&str> {
+    fn unicode_str(&self) -> Option<&str> {
         match self {
             Self::Full(p) => Some(p.unicode_str()),
             Self::Empty => Some(" ⠀"),
@@ -1141,7 +1218,7 @@ pub enum Error {
     #[error("cannot parse symbol")]
     Parse,
 }
-/*
+
 #[cfg(test)]
 mod tests {
     use crate::evaluation::evaluate_rel;
@@ -1194,8 +1271,8 @@ mod tests {
     #[test]
     fn mate_in_1_depth_1() {
         let mut b = BoardState::from_fen("1k6/ppp3Q1/8/8/8/8/6K1/8 w").unwrap();
-        let (m, _) = b.iterative_deepening_nega(300, None);
-        b.make(m.first().unwrap());
+        let (_, m) = b.iterative_deepening_nega(None, Some(1));
+        b.make(&m.unwrap());
         assert!(b.check(PieceColor::Black));
         assert_eq!(evaluate_rel(&mut b, false), -i32::MAX);
     }
@@ -1203,8 +1280,8 @@ mod tests {
     #[test]
     fn mate_in_1_depth_2() {
         let mut b = BoardState::from_fen("1k6/ppp3Q1/8/8/8/8/6K1/8 w").unwrap();
-        let (m, _) = b.iterative_deepening_nega(300, Some(2));
-        b.make(m.first().unwrap());
+        let (_, m) = b.iterative_deepening_nega(None, Some(2));
+        b.make(&m.unwrap());
         assert!(b.check(PieceColor::Black));
         assert_eq!(evaluate_rel(&mut b, false), -i32::MAX);
     }
@@ -1214,45 +1291,19 @@ mod tests {
     #[test]
     fn mate_in_1_depth_3() {
         let mut b = BoardState::from_fen("1k6/ppp3Q1/8/8/8/8/6K1/8 w").unwrap();
-        let (m, _) = b.iterative_deepening_nega(300, Some(3));
-        b.make(m.first().unwrap());
+        let (_, m) = b.iterative_deepening_nega(None, Some(3));
+        b.make(&m.unwrap());
         assert!(b.check(PieceColor::Black));
         assert_eq!(evaluate_rel(&mut b, false), -i32::MAX);
     }
-
-    #[test]
-    fn mate_in_1_iterative() {
-        let mut b = BoardState::from_fen("1k6/ppp3Q1/8/8/8/8/6K1/8 w").unwrap();
-        let (m, _) = b.iterative_deepening_nega(300, None);
-        b.make(m.first().unwrap());
-        assert!(b.check(PieceColor::Black));
-        assert_eq!(evaluate_rel(&mut b, false), -i32::MAX);
-    }
-
+    /*
     #[test]
     fn mate_in_3_endgame() {
         let b = BoardState::from_fen("7R/2N1P3/8/8/8/8/k6K/8 w").unwrap();
-        let m = b.iterative_deepening_nega(500, Some(5));
-        for m in m.0.iter() {
-            eprint!("{} ", m);
-        }
-        assert_eq!(m.0.first().unwrap().to, Field::new(8, 2));
-    }
-
-    /*#[test]
-    fn mate_in_3_iterative_long() {
-        let b = BoardState::from_fen("7R/2N1P3/8/8/8/8/k6K/8 w").unwrap();
-        let m = b.iterative_deepening(5000);
-        assert_eq!(m.0.unwrap().to, Field::new(8, 2));
+        let (_, m) = b.iterative_deepening_nega(None, Some(5));
+        assert_eq!(m.unwrap().to, Field::new(8, 2));
     }*/
 
-    //This takes a long time, disable if not needed
-    //#[test]
-    /*fn mate_in_3_depth_5() {
-        let mut b = BoardState::from_fen("r5k1/1bp3pp/rp6/3N4/4P3/P4R2/6PP/5RK1 w").unwrap();
-        let m = b.minimax(5);
-        assert!(m.1 == i32::MAX);
-    }*/
     #[test]
     #[should_panic]
     fn castling_rights_in_fen_but_impossible() {
@@ -1263,7 +1314,7 @@ mod tests {
     fn white_pawn_take_left() {
         let b = BoardState::from_fen("rnbqkbnr/pppp1ppp/8/3p4/4P3/8/PPPP1PPP/RNBQKBNR w").unwrap();
         eq_fields(
-            b.board.pseudo_legal_moves(Field::new(4, 5), false).unwrap(),
+            b.pseudo_legal_moves(Field::new(4, 5), false).unwrap(),
             vec![Field::new(5, 4), Field::new(5, 5)],
         );
     }
@@ -1272,7 +1323,7 @@ mod tests {
     fn white_pawn_not_take_center() {
         let b = BoardState::from_fen("rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w").unwrap();
         eq_fields(
-            b.board.pseudo_legal_moves(Field::new(4, 5), false).unwrap(),
+            b.pseudo_legal_moves(Field::new(4, 5), false).unwrap(),
             vec![],
         );
     }
@@ -1281,7 +1332,7 @@ mod tests {
     fn white_pawn_take_right() {
         let b = BoardState::from_fen("rnbqkbnr/pppp1ppp/8/5p2/4P3/8/PPPP1PPP/RNBQKBNR w").unwrap();
         eq_fields(
-            b.board.pseudo_legal_moves(Field::new(4, 5), false).unwrap(),
+            b.pseudo_legal_moves(Field::new(4, 5), false).unwrap(),
             vec![Field::new(5, 6), Field::new(5, 5)],
         );
     }
@@ -1290,7 +1341,7 @@ mod tests {
     fn black_pawn_take_left() {
         let b = BoardState::from_fen("rnbqkbnr/pppp1ppp/8/4p3/3P4/8/PPP1PPPP/RNBQKBNR b").unwrap();
         eq_fields(
-            b.board.pseudo_legal_moves(Field::new(5, 5), false).unwrap(),
+            b.pseudo_legal_moves(Field::new(5, 5), false).unwrap(),
             vec![Field::new(4, 4), Field::new(4, 5)],
         );
     }
@@ -1299,7 +1350,7 @@ mod tests {
     fn black_pawn_not_take_center() {
         let b = BoardState::from_fen("rnbqkbnr/ppp1pppp/8/3p4/3P4/8/PPP1PPPP/RNBQKBNR b").unwrap();
         eq_fields(
-            b.board.pseudo_legal_moves(Field::new(5, 4), false).unwrap(),
+            b.pseudo_legal_moves(Field::new(5, 4), false).unwrap(),
             vec![],
         );
     }
@@ -1308,7 +1359,7 @@ mod tests {
     fn black_pawn_take_right() {
         let b = BoardState::from_fen("rnbqkbnr/ppp1pppp/8/3p4/4P3/8/PPPP1PPP/RNBQKBNR b").unwrap();
         eq_fields(
-            b.board.pseudo_legal_moves(Field::new(5, 4), false).unwrap(),
+            b.pseudo_legal_moves(Field::new(5, 4), false).unwrap(),
             vec![Field::new(4, 4), Field::new(4, 5)],
         );
     }
@@ -1317,7 +1368,7 @@ mod tests {
     fn white_pawn_double_push() {
         let b = BoardState::new();
         eq_fields(
-            b.board.pseudo_legal_moves(Field::new(2, 1), false).unwrap(),
+            b.pseudo_legal_moves(Field::new(2, 1), false).unwrap(),
             vec![Field::new(3, 1), Field::new(4, 1)],
         );
     }
@@ -1326,7 +1377,7 @@ mod tests {
     fn black_pawn_double_push() {
         let b = BoardState::new();
         eq_fields(
-            b.board.pseudo_legal_moves(Field::new(7, 1), false).unwrap(),
+            b.pseudo_legal_moves(Field::new(7, 1), false).unwrap(),
             vec![Field::new(6, 1), Field::new(5, 1)],
         );
     }
@@ -1336,7 +1387,7 @@ mod tests {
         let b =
             BoardState::from_fen("rnbqkbnr/1ppppppp/8/8/p7/8/PPPPPPPP/RNBQKBNR w KQkq").unwrap();
         eq_fields(
-            b.board.pseudo_legal_moves(Field::new(2, 1), false).unwrap(),
+            b.pseudo_legal_moves(Field::new(2, 1), false).unwrap(),
             vec![Field::new(3, 1)],
         );
     }
@@ -1345,9 +1396,46 @@ mod tests {
     fn black_pawn_double_push_blocked() {
         let b = BoardState::from_fen("rnbqkbnr/pppppppp/8/P7/8/8/1PPPPPPP/RNBQKBNR w").unwrap();
         eq_fields(
-            b.board.pseudo_legal_moves(Field::new(7, 1), false).unwrap(),
+            b.pseudo_legal_moves(Field::new(7, 1), false).unwrap(),
             vec![Field::new(6, 1)],
         );
+    }
+
+    #[test]
+    fn no_en_passant() {
+        let b = BoardState::from_fen("7k/8/8/4pP2/8/8/1K6/8 w").unwrap();
+        eq_fields(
+            b.pseudo_legal_moves(Field::new(5, 6), false).unwrap(),
+            vec![Field::new(6, 6)],
+        );
+    }
+
+    #[test]
+    fn en_passant_in_fen() {
+        let b = BoardState::from_fen("7k/8/8/4pP2/8/8/1K6/8 w - e6").unwrap();
+        eq_fields(
+            b.pseudo_legal_moves(Field::new(5, 6), false).unwrap(),
+            vec![Field::new(6, 5), Field::new(6, 6)],
+        );
+    }
+
+    #[test]
+    fn en_passant_in_fen_black() {
+        let b = BoardState::from_fen("7k/8/8/8/3pP3/K7/8/8 b - e3").unwrap();
+        eq_fields(
+            b.pseudo_legal_moves(Field::new(4, 4), false).unwrap(),
+            vec![Field::new(3, 4), Field::new(3, 5)],
+        );
+    }
+
+    #[test]
+    fn en_passant_after_double_push() {
+        let mut b = BoardState::from_fen("7k/8/8/8/3p4/K7/4P3/8 w - -").unwrap();
+        assert_eq!(b.en_passant(), None);
+        b.move_by_str("e2e4");
+        assert_eq!(b.en_passant(), Some(Field::new(3, 5)));
+        b.move_by_str("d4e3");
+        assert_eq!(b.en_passant(), None);
     }
 
     #[test]
@@ -1355,7 +1443,7 @@ mod tests {
         let b =
             BoardState::from_fen("rnbqkbnr/pppppppp/8/8/8/4P3/PPPP1PPP/RNBQKBNR w KQkq").unwrap();
         eq_fields(
-            b.board.pseudo_legal_moves(Field::new(2, 4), false).unwrap(),
+            b.pseudo_legal_moves(Field::new(2, 4), false).unwrap(),
             vec![Field::new(3, 4), Field::new(4, 4)],
         );
     }
@@ -1364,7 +1452,7 @@ mod tests {
     fn white_knight_takes() {
         let b = BoardState::from_fen("rnbqkbnr/pp1ppppp/8/8/8/2p5/PPPPPPPP/RNBQKBNR w").unwrap();
         eq_fields(
-            b.board.pseudo_legal_moves(Field::new(1, 2), false).unwrap(),
+            b.pseudo_legal_moves(Field::new(1, 2), false).unwrap(),
             vec![Field::new(3, 1), Field::new(3, 3)],
         );
     }
@@ -1373,7 +1461,7 @@ mod tests {
     fn black_knight_corner_blocked() {
         let b = BoardState::from_fen("n7/2p3k1/1p6/8/8/4K3/8/8 w").unwrap();
         eq_fields(
-            b.board.pseudo_legal_moves(Field::new(8, 1), false).unwrap(),
+            b.pseudo_legal_moves(Field::new(8, 1), false).unwrap(),
             vec![],
         );
     }
@@ -1382,7 +1470,7 @@ mod tests {
     fn black_knight_corner_takes() {
         let b = BoardState::from_fen("n7/2p3k1/1P6/8/8/4K3/8/8 w").unwrap();
         eq_fields(
-            b.board.pseudo_legal_moves(Field::new(8, 1), false).unwrap(),
+            b.pseudo_legal_moves(Field::new(8, 1), false).unwrap(),
             vec![Field::new(6, 2)],
         );
     }
@@ -1391,7 +1479,7 @@ mod tests {
     fn black_knight_edge_takes() {
         let b = BoardState::from_fen("8/1k3p2/7n/8/6P1/8/2K5/8 w").unwrap();
         eq_fields(
-            b.board.pseudo_legal_moves(Field::new(6, 8), false).unwrap(),
+            b.pseudo_legal_moves(Field::new(6, 8), false).unwrap(),
             vec![Field::new(8, 7), Field::new(5, 6), Field::new(4, 7)],
         );
     }
@@ -1400,7 +1488,7 @@ mod tests {
     fn black_knight_edge_blocked() {
         let b = BoardState::from_fen("6p1/1k3p2/7n/5p2/6p1/8/1K6/8 w").unwrap();
         eq_fields(
-            b.board.pseudo_legal_moves(Field::new(6, 8), false).unwrap(),
+            b.pseudo_legal_moves(Field::new(6, 8), false).unwrap(),
             vec![],
         );
     }
@@ -1409,7 +1497,7 @@ mod tests {
     fn white_bishop_attack_partially_blocked() {
         let b = BoardState::from_fen("8/8/8/4R3/1p6/2B4k/8/p6K w").unwrap();
         eq_fields(
-            b.board.pseudo_legal_moves(Field::new(3, 3), false).unwrap(),
+            b.pseudo_legal_moves(Field::new(3, 3), false).unwrap(),
             vec![
                 Field::new(2, 2),
                 Field::new(4, 4),
@@ -1479,7 +1567,7 @@ mod tests {
         let correct_hash = zobrist::ZobristState::from_board_state(&b1).hash;
 
         //hash von initial position nehmen, change_hahs aufrufen für die pieces
-        //soll nur schauen, dass der hash mal deterministisch ist.
+        //soll nur schauen, dass der hash deterministisch ist.
 
         let b2 =
             BoardState::from_fen("rnbqkb1r/p1p1pppp/1p3n2/3p4/4P3/5N2/PPPPBPPP/RNBQK2R w KQkq")
@@ -1529,4 +1617,3 @@ mod tests {
         assert_eq!(fields, v2);
     }
 }
-*/

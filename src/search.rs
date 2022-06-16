@@ -25,6 +25,8 @@ impl BoardState {
         transposition_table: &mut HashMap<u32, TranspositionEntry>,
         stop_receiver: &Receiver<bool>,
     ) -> i32 {
+        // self.draw_board(true);
+
         // eprintln!("--Start depth {}. a: {}. b: {}--", depth, alpha, beta);
 
         /*Accessing the transposition table. best_move is None only in horizon nodes and end_of_game nodes.
@@ -49,7 +51,7 @@ impl BoardState {
 
         /*Unfortunately we have to check for end of game before getting values from the transposition table.
         That is because a position which has a threefold repetition draw incoming in the next move has the same
-        zobrist hash as one without such a threat. Does getting the tt value from a position without the threat would
+        zobrist hash as one without such a threat. Thus getting the tt value from a position without the threat would
         lead to incorrect play and allow the opponent to force a draw. */
         if let Some(entry) =
             self.get_matching_transposition_entry(depth, EvaluationFlag::Exact, transposition_table)
@@ -134,7 +136,6 @@ impl BoardState {
                 best_move = Some(m.clone());
             }
 
-            // self.draw_board(true);
             let new_eval =
                 -self.negamax(depth - 1, -beta, -alpha, transposition_table, stop_receiver);
 
@@ -204,6 +205,8 @@ impl BoardState {
         transposition_table: &mut HashMap<u32, TranspositionEntry>,
         stop_receiver: &Receiver<bool>,
     ) -> i32 {
+        // self.draw_board(true);
+
         //todo: Problem: für checkmate / draw muss ich alle moves generieren, aber dann verliere ich den ganzen vorteil der
         //quiescence search (die ja nur captures generieren müsste)
         /*lösung: könnte noch ein zweites argument mit legal_captures machen. problem ist aktuell nur noch, dass ich für stalemate
