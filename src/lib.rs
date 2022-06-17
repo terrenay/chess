@@ -750,7 +750,7 @@ impl BoardState {
 
     pub fn print_all_moves(&self) {
         let mut ply = 2;
-        for m in self.moves.iter() {
+        for m in &self.moves {
             if ply % 2 == 0 {
                 print!("{}. ", ply / 2);
             }
@@ -763,6 +763,22 @@ impl BoardState {
             }
             ply += 1;
         }
+    }
+
+    pub fn perft(&mut self, depth: u32) -> u32 {
+        assert!(depth > 0);
+        let mut count = 0;
+        let moves = self.generate_legal_moves(false, false, None);
+        //count += moves.len() as u32;
+        if depth == 1 {
+            return moves.len() as u32;
+        }
+        for m in &moves {
+            self.make(m);
+            count += self.perft(depth - 1);
+            self.unmake();
+        }
+        count
     }
 }
 

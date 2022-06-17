@@ -12,7 +12,7 @@ fn main() {
     b.draw(true);
     //b.negamax_standalone(3).0;
     let mut count = 0;
-    println!("e: egine, h: play");
+    println!("e: egine, h: play, p: perft");
     let game_mode: String = read!();
     match game_mode.as_str() {
         "e" => {
@@ -145,6 +145,11 @@ fn main() {
                     }
                 }
                 _ => (),
+            }
+        }
+        "p" => {
+            for i in 1.. {
+                println!("Depth {}: Nodes: {}", i, b.perft(i));
             }
         }
         _ => (),
