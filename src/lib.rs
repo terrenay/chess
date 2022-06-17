@@ -51,7 +51,7 @@ pub struct BoardState {
 }
 
 impl BoardState {
-    fn en_passant(&self) -> Option<Field> {
+    pub fn en_passant(&self) -> Option<Field> {
         if let Some(last) = self.moves.last() {
             if last.piece.kind == PieceKind::Pawn && (last.from.rank - last.to.rank).abs() == 2 {
                 if last.piece.color == PieceColor::White {
@@ -211,7 +211,13 @@ impl BoardState {
 
         //Pawns
 
-        for m in self.pseudo_legal_pawn_moves(victim_color, field, true) {
+        /*Notice that we don't generate en passant captures at this point! Doing so leads
+        to very weird behaviour if the white king is on d5 and the last move was c7c5, so c6 is
+        and en_passant square. Then Kd5c6 would be a pseudolegal move, thus the program would think
+        the king is under attack from a pawn on c6, even though there is nothing there. The program would
+        incorrectly conclude that the current position is check. That would be sad.*/
+
+        for m in self.pseudo_legal_pawn_moves(victim_color, field, true, true) {
             let Field { rank, file } = m.to;
             if let Square::Full(p) = self.board.at(rank, file) {
                 if matches!(p.kind, PieceKind::Pawn) {
@@ -243,11 +249,13 @@ impl BoardState {
     }
 
     ///Only called in make. To unmake the hash, we just pop the last value from the hash history.
+    /// old_en_passant: needs the state.en_passant() from before make() was called.
     pub fn make_zobrist(
         &mut self,
         m: &Move,
         moving_piece: Piece,
         changed_castling_rights: &ChangedCastlingRights,
+        old_en_passant: Option<Field>,
     ) {
         //Put moving piece on new square and remove moving piece.
         //In a promotion move, moving_piece is a queen, which is important when unmaking since we have to place a pawn
@@ -327,6 +335,14 @@ impl BoardState {
         if changed_castling_rights.black_queen {
             self.zobrist
                 .change_castling_rights(MoveType::CastleQueenside, PieceColor::Black);
+        }
+
+        //Undo en_passant from previous move and do en_passant for current move
+        if let Some(ep) = old_en_passant {
+            self.zobrist.change_en_passant(ep);
+        }
+        if let Some(ep) = self.en_passant() {
+            self.zobrist.change_en_passant(ep);
         }
 
         //Change turn
@@ -713,7 +729,7 @@ impl BoardState {
 
         let en_passant = Self::parse_en_passant_fen(chars);
 
-        let zobrist = ZobristState::from(&board, turn, &castling_rights);
+        let zobrist = ZobristState::from(&board, turn, &castling_rights, en_passant);
 
         let hashes = vec![zobrist.hash];
 

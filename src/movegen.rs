@@ -172,7 +172,9 @@ impl BoardState {
         let board = &self.board;
         match board.at(rank, file) {
             Square::Full(p) => match p.kind {
-                PieceKind::Pawn => Ok(self.pseudo_legal_pawn_moves(p.color, from, only_captures)),
+                PieceKind::Pawn => {
+                    Ok(self.pseudo_legal_pawn_moves(p.color, from, only_captures, false))
+                }
                 PieceKind::Knight => {
                     Ok(board.pseudo_legal_knight_moves(p.color, from, only_captures))
                 }
@@ -196,6 +198,7 @@ impl BoardState {
         color: PieceColor,
         from: Field,
         only_captures: bool,
+        no_en_passant: bool,
     ) -> Vec<Move> {
         let Field { rank, file } = from;
         let starting_rank;
@@ -240,23 +243,23 @@ impl BoardState {
             }
         }
 
+        if only_captures && no_en_passant {
+            return moves;
+        }
+
         //En passant capture
         if let Some(Field {
             rank: ep_rank,
             file: ep_file,
         }) = self.en_passant()
         {
-            if ep_rank != 6 && ep_rank != 3 {
-                eprintln!("{:?}", self.en_passant());
-            }
+            debug_assert!(ep_rank == 6 || ep_rank == 3);
             if rank + rank_offset == ep_rank {
                 for file_offset in left_right.iter() {
-                    if file + file_offset == ep_file {
-                        debug_assert_eq!(
-                            self.board.at(rank, file + file_offset),
-                            Square::Full(Piece::pawn(opposite_color))
-                        );
-
+                    if file + file_offset == ep_file
+                        && self.board.at(rank, file + file_offset)
+                            == Square::Full(Piece::pawn(opposite_color))
+                    {
                         moves.push(Move::en_passant(from, color, Field::new(ep_rank, ep_file)));
                     }
                 }
@@ -299,8 +302,11 @@ impl BoardState {
 
     ///Assumes the move is fully legal!
     pub fn make(&mut self, m: &Move) {
+        let old_en_passant = self.en_passant();
+
         self.moves.push(m.clone());
         let old_castling_rights = self.castling_rights.clone();
+
         if let Square::Full(moving_piece) = self.board.at(m.from.rank, m.from.file) {
             debug_assert_eq!(moving_piece, m.piece);
             match m.move_type {
@@ -404,7 +410,7 @@ impl BoardState {
                 ChangedCastlingRights::new(&old_castling_rights, &self.castling_rights);
 
             //eprintln!("make calles make_zobrist");
-            self.make_zobrist(m, moving_piece, &changed_castling_rights);
+            self.make_zobrist(m, moving_piece, &changed_castling_rights, old_en_passant);
 
             self.hash_history.push(self.zobrist.hash);
 

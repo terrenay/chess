@@ -13,7 +13,8 @@ pub struct ZobristValues {
     black_king_castle_rights: u64,
     black_queen_castle_rights: u64,
     black_to_move: u64,
-    piece_at: [[[u64; 8]; 8]; 12], //rank, file, piece_index
+    piece_at: [[[u64; 8]; 8]; 12], //file, rank, piece_index
+    en_passant: [[u64; 8]; 8],
 }
 
 impl ZobristValues {
@@ -41,6 +42,15 @@ impl ZobristValues {
 
         let black_to_move = rng.next_u64();
 
+        let mut en_passant = [[0; 8]; 8];
+
+        #[allow(clippy::needless_range_loop)]
+        for rank in 0..8 {
+            for file in 0..8 {
+                en_passant[rank][file] = rng.next_u64();
+            }
+        }
+
         Self {
             white_king_castle_rights,
             white_queen_castle_rights,
@@ -48,11 +58,16 @@ impl ZobristValues {
             black_queen_castle_rights,
             black_to_move,
             piece_at,
+            en_passant,
         }
     }
 
     pub fn get(&mut self, field: Field, piece: Piece) -> u64 {
         self.piece_at[piece.index()][field.rank as usize - 1][field.file as usize - 1]
+    }
+
+    fn get_en_passant(&self, field: Field) -> u64 {
+        self.en_passant[field.rank as usize - 1][field.file as usize - 1]
     }
 }
 
@@ -69,7 +84,12 @@ impl ZobristState {
         Self { values, hash: 0 } //temporary object, hash to be modified
     }
 
-    pub fn from(board: &Board, turn: PieceColor, castling_rights: &CastlingRights) -> Self {
+    pub fn from(
+        board: &Board,
+        turn: PieceColor,
+        castling_rights: &CastlingRights,
+        en_passant: Option<Field>,
+    ) -> Self {
         //Create an initial object with a hash of 0. The hash of the current
         //board state can then be computed iteratively.
         let mut zobrist_state = Self::new();
@@ -100,6 +120,11 @@ impl ZobristState {
         if castling_rights.black_queen_castle_lost_ply.is_some() {
             zobrist_state.change_castling_rights(MoveType::CastleQueenside, PieceColor::Black);
         }
+
+        if let Some(ep) = en_passant {
+            zobrist_state.change_en_passant(ep);
+        }
+
         zobrist_state
     }
 
@@ -108,6 +133,7 @@ impl ZobristState {
             &board_state.board,
             board_state.turn,
             &board_state.castling_rights,
+            board_state.en_passant(),
         )
     }
 
@@ -137,5 +163,10 @@ impl ZobristState {
             },
             _ => panic!("Invalid move type for change_castling_rights"),
         }
+    }
+
+    ///Call if this square is available as en passant
+    pub fn change_en_passant(&mut self, field: Field) {
+        self.hash ^= self.values.get_en_passant(field);
     }
 }
